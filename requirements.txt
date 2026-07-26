@@ -1,0 +1,9 @@
+# >=2.7.0 requerido: soporta el endpoint data_sources (modelo de API de Notion
+# 2025-09-03+, donde las propiedades y filas viven en un data source, no en
+# el database contenedor).
+notion-client>=2.7.0,<3
+google-api-python-client>=2.100.0,<3
+google-auth>=2.23.0,<3
+icalendar>=5.0.11,<6
+python-dateutil>=2.8.2,<3
+python-dotenv>=1.0.0,<2
