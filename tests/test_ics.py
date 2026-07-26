@@ -3,17 +3,17 @@ from datetime import date, datetime
 from icalendar import Calendar
 
 from lib.ics import build_ics
-from lib.schemas import AsesoriaSubmission, ClasesSubmission
+from lib.schemas import AdvisorySubmission, ClassSubmission
 
 
-def test_build_ics_asesoria_all_day_event():
-    submission = AsesoriaSubmission(
+def test_build_ics_advisory_all_day_event():
+    submission = AdvisorySubmission(
         page_id="page-1",
-        nombre="Ana",
-        correo="ana@example.com",
-        fecha=date(2026, 8, 1),
+        name="Ana",
+        email="ana@example.com",
+        deadline=date(2026, 8, 1),
         calendar_event_id=None,
-        email_enviado=False,
+        email_sent=False,
     )
 
     ics_bytes = build_ics(submission, timezone="UTC", class_duration_minutes=60)
@@ -27,14 +27,14 @@ def test_build_ics_asesoria_all_day_event():
     assert event["DTEND"].dt == date(2026, 8, 2)
 
 
-def test_build_ics_clases_timed_event():
-    submission = ClasesSubmission(
+def test_build_ics_class_timed_event():
+    submission = ClassSubmission(
         page_id="page-2",
-        nombre="Beto",
-        correo="beto@example.com",
-        fecha_hora=datetime(2026, 8, 2, 15, 30, 0),
+        name="Beto",
+        email="beto@example.com",
+        scheduled_at=datetime(2026, 8, 2, 15, 30, 0),
         calendar_event_id=None,
-        email_enviado=False,
+        email_sent=False,
     )
 
     ics_bytes = build_ics(submission, timezone="America/Costa_Rica", class_duration_minutes=45)

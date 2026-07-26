@@ -3,28 +3,30 @@ from email import message_from_string
 from email.header import decode_header
 
 from lib.email_client import send_confirmation_email
-from lib.schemas import AsesoriaSubmission, ClasesSubmission
+from lib.schemas import AdvisorySubmission, ClassSubmission
+
+BUSINESS_NAME = "Test Co"
 
 
-def _asesoria_submission():
-    return AsesoriaSubmission(
+def _advisory_submission():
+    return AdvisorySubmission(
         page_id="page-1",
-        nombre="Ana",
-        correo="ana@example.com",
-        fecha=date(2026, 8, 1),
+        name="Ana",
+        email="ana@example.com",
+        deadline=date(2026, 8, 1),
         calendar_event_id=None,
-        email_enviado=False,
+        email_sent=False,
     )
 
 
-def _clases_submission():
-    return ClasesSubmission(
+def _class_submission():
+    return ClassSubmission(
         page_id="page-2",
-        nombre="Beto",
-        correo="beto@example.com",
-        fecha_hora=datetime(2026, 8, 2, 15, 30, 0),
+        name="Beto",
+        email="beto@example.com",
+        scheduled_at=datetime(2026, 8, 2, 15, 30, 0),
         calendar_event_id=None,
-        email_enviado=False,
+        email_sent=False,
     )
 
 
@@ -40,7 +42,7 @@ def _decoded_html_body(message) -> str:
     for part in message.walk():
         if part.get_content_type() == "text/html":
             return part.get_payload(decode=True).decode("utf-8")
-    raise AssertionError("No se encontro parte text/html en el mensaje")
+    raise AssertionError("No text/html part found in the message")
 
 
 def _send_and_parse(mocker, submission):
@@ -49,40 +51,40 @@ def _send_and_parse(mocker, submission):
     fake_smtp.__exit__ = mocker.Mock(return_value=False)
     mocker.patch("lib.email_client.smtplib.SMTP", return_value=fake_smtp)
 
-    send_confirmation_email("andres@gmail.com", "app-password", submission, b"ICS")
+    send_confirmation_email(
+        "andres@gmail.com", "app-password", submission, b"ICS", BUSINESS_NAME
+    )
 
     fake_smtp.starttls.assert_called_once()
     fake_smtp.login.assert_called_once_with("andres@gmail.com", "app-password")
     from_addr, to_addrs, message_str = fake_smtp.sendmail.call_args[0]
     assert from_addr == "andres@gmail.com"
-    assert to_addrs == [submission.correo]
+    assert to_addrs == [submission.email]
     return message_from_string(message_str)
 
 
-def test_asesoria_email_mentions_deadline_and_signature(mocker):
-    message = _send_and_parse(mocker, _asesoria_submission())
+def test_advisory_email_mentions_deadline_business_name_and_signature(mocker):
+    message = _send_and_parse(mocker, _advisory_submission())
 
-    assert _decode_subject(message) == "Confirmación de tu solicitud de asesoría — ACV"
+    assert _decode_subject(message) == f"Confirmación de tu solicitud de asesoría — {BUSINESS_NAME}"
     body = _decoded_html_body(message)
     assert "01/08/2026" in body
+    assert BUSINESS_NAME in body
     assert "Andrés Cubillo" in body
-    assert "Equipo ACV" not in body
 
 
-def test_clases_email_mentions_datetime(mocker):
-    message = _send_and_parse(mocker, _clases_submission())
+def test_class_email_mentions_datetime_and_business_name(mocker):
+    message = _send_and_parse(mocker, _class_submission())
 
-    assert _decode_subject(message) == "Confirmación de tu clase — ACV"
+    assert _decode_subject(message) == f"Confirmación de tu clase — {BUSINESS_NAME}"
     body = _decoded_html_body(message)
     assert "02/08/2026" in body
     assert "15:30" in body
 
 
 def test_ics_attachment_is_included(mocker):
-    message = _send_and_parse(mocker, _asesoria_submission())
+    message = _send_and_parse(mocker, _advisory_submission())
 
-    attachments = [
-        part for part in message.walk() if part.get_filename() == "evento.ics"
-    ]
+    attachments = [part for part in message.walk() if part.get_filename() == "evento.ics"]
     assert len(attachments) == 1
     assert attachments[0].get_payload(decode=True) == b"ICS"

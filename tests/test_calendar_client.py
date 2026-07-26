@@ -1,17 +1,17 @@
 from datetime import date, datetime
 
 from lib.calendar_client import build_all_day_event_body, build_timed_event_body
-from lib.schemas import AsesoriaSubmission, ClasesSubmission
+from lib.schemas import AdvisorySubmission, ClassSubmission
 
 
 def test_all_day_event_body_spans_single_day():
-    submission = AsesoriaSubmission(
+    submission = AdvisorySubmission(
         page_id="page-1",
-        nombre="Ana",
-        correo="ana@example.com",
-        fecha=date(2026, 8, 1),
+        name="Ana",
+        email="ana@example.com",
+        deadline=date(2026, 8, 1),
         calendar_event_id=None,
-        email_enviado=False,
+        email_sent=False,
     )
 
     body = build_all_day_event_body(submission)
@@ -22,13 +22,13 @@ def test_all_day_event_body_spans_single_day():
 
 
 def test_timed_event_body_uses_duration_and_timezone():
-    submission = ClasesSubmission(
+    submission = ClassSubmission(
         page_id="page-2",
-        nombre="Beto",
-        correo="beto@example.com",
-        fecha_hora=datetime(2026, 8, 2, 15, 30, 0),
+        name="Beto",
+        email="beto@example.com",
+        scheduled_at=datetime(2026, 8, 2, 15, 30, 0),
         calendar_event_id=None,
-        email_enviado=False,
+        email_sent=False,
     )
 
     body = build_timed_event_body(submission, timezone="America/Costa_Rica", duration_minutes=90)
@@ -53,13 +53,13 @@ def test_calendar_repository_dispatches_by_submission_type(mocker):
     from lib.calendar_client import CalendarRepository
 
     repo = CalendarRepository({"type": "service_account"}, "calendar-id")
-    submission = ClasesSubmission(
+    submission = ClassSubmission(
         page_id="page-2",
-        nombre="Beto",
-        correo="beto@example.com",
-        fecha_hora=datetime(2026, 8, 2, 15, 30, 0),
+        name="Beto",
+        email="beto@example.com",
+        scheduled_at=datetime(2026, 8, 2, 15, 30, 0),
         calendar_event_id=None,
-        email_enviado=False,
+        email_sent=False,
     )
 
     result = repo.create_event_for_submission(submission, "UTC", 60)

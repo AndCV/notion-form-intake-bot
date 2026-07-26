@@ -1,14 +1,15 @@
-"""Envio del correo de confirmacion via Gmail (SMTP + App Password), con el
-.ics adjunto.
+"""Sends the confirmation email via Gmail (SMTP + App Password), with the
+.ics attached.
 
-Se manda desde una cuenta de Gmail personal en vez de un proveedor
-transaccional (Resend) porque no hay un dominio propio verificado: Gmail no
-exige dominio para mandar a cualquier destinatario, solo una App Password de
-la cuenta remitente (ver README, seccion "Gmail (envio de correo)").
+Sent from a personal Gmail account instead of a transactional provider
+(e.g. Resend) because there's no verified custom domain: Gmail doesn't
+require one to send to any recipient, only an App Password for the sending
+account (see README, "Gmail (sending email)" section).
 
-El texto de los correos esta aislado en las funciones _asesoria_email y
-_clases_email de mas abajo para que sea facil de editar sin tocar el resto
-de la logica de envio.
+The email copy itself is isolated in _advisory_email and _class_email below
+so it's easy to edit without touching the rest of the send logic. The copy
+stays in Spanish on purpose: it's real content sent to real Spanish-speaking
+clients, not code.
 """
 
 from __future__ import annotations
@@ -19,31 +20,31 @@ from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
-from .schemas import AsesoriaSubmission, Submission
+from .schemas import AdvisorySubmission, Submission
 
 
-def _asesoria_email(submission: AsesoriaSubmission) -> tuple[str, str]:
-    fecha_texto = submission.fecha.strftime("%d/%m/%Y")
-    subject = "Confirmación de tu solicitud de asesoría — ACV"
+def _advisory_email(submission: AdvisorySubmission, business_name: str) -> tuple[str, str]:
+    date_text = submission.deadline.strftime("%d/%m/%Y")
+    subject = f"Confirmación de tu solicitud de asesoría — {business_name}"
     html = f"""
-        <p>Hola {submission.nombre},</p>
+        <p>Hola {submission.name},</p>
         <p>Recibimos tu solicitud de asesoría. Tu fecha límite registrada es el
-        <strong>{fecha_texto}</strong>.</p>
+        <strong>{date_text}</strong>.</p>
         <p>Te vamos a contactar antes de esa fecha para coordinar los detalles.
         Adjuntamos un evento de referencia para que lo agregues a tu
         calendario.</p>
-        <p>Gracias por confiar en ACV.</p>
+        <p>Gracias por confiar en {business_name}.</p>
         <p>— Andrés Cubillo</p>
     """
     return subject, html
 
 
-def _clases_email(submission: Submission) -> tuple[str, str]:
-    fecha_texto = submission.fecha_hora.strftime("%d/%m/%Y a las %H:%M")
-    subject = "Confirmación de tu clase — ACV"
+def _class_email(submission: Submission, business_name: str) -> tuple[str, str]:
+    date_text = submission.scheduled_at.strftime("%d/%m/%Y a las %H:%M")
+    subject = f"Confirmación de tu clase — {business_name}"
     html = f"""
-        <p>Hola {submission.nombre},</p>
-        <p>Tu clase quedó agendada para el <strong>{fecha_texto}</strong>.</p>
+        <p>Hola {submission.name},</p>
+        <p>Tu clase quedó agendada para el <strong>{date_text}</strong>.</p>
         <p>Adjuntamos el evento para que lo agregues a tu calendario. Cualquier
         cambio de horario avísanos con anticipación.</p>
         <p>Nos vemos pronto.</p>
@@ -52,16 +53,18 @@ def _clases_email(submission: Submission) -> tuple[str, str]:
     return subject, html
 
 
-def _build_message(gmail_address: str, submission: Submission, ics_bytes: bytes) -> MIMEMultipart:
-    if isinstance(submission, AsesoriaSubmission):
-        subject, html = _asesoria_email(submission)
+def _build_message(
+    gmail_address: str, submission: Submission, ics_bytes: bytes, business_name: str
+) -> MIMEMultipart:
+    if isinstance(submission, AdvisorySubmission):
+        subject, html = _advisory_email(submission, business_name)
     else:
-        subject, html = _clases_email(submission)
+        subject, html = _class_email(submission, business_name)
 
     message = MIMEMultipart("mixed")
     message["Subject"] = subject
     message["From"] = gmail_address
-    message["To"] = submission.correo
+    message["To"] = submission.email
     message.attach(MIMEText(html, "html"))
 
     attachment = MIMEBase("text", "calendar")
@@ -74,11 +77,15 @@ def _build_message(gmail_address: str, submission: Submission, ics_bytes: bytes)
 
 
 def send_confirmation_email(
-    gmail_address: str, gmail_app_password: str, submission: Submission, ics_bytes: bytes
+    gmail_address: str,
+    gmail_app_password: str,
+    submission: Submission,
+    ics_bytes: bytes,
+    business_name: str,
 ) -> None:
-    message = _build_message(gmail_address, submission, ics_bytes)
+    message = _build_message(gmail_address, submission, ics_bytes, business_name)
 
     with smtplib.SMTP("smtp.gmail.com", 587) as server:
         server.starttls()
         server.login(gmail_address, gmail_app_password)
-        server.sendmail(gmail_address, [submission.correo], message.as_string())
+        server.sendmail(gmail_address, [submission.email], message.as_string())

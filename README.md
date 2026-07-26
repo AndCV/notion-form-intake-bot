@@ -1,97 +1,121 @@
-# ACV — backend del formulario de captación
+# Notion Form Intake Bot
 
-Servicio en Python que corre por cron (sin servidor persistente) y en cada
-corrida:
+A Python service that runs on a schedule (no persistent server) and, on
+every run:
 
-1. Consulta la base de Notion **"Solicitudes ACV"** buscando filas nuevas o
-   sin procesar.
-2. Para cada fila: si el `Tipo` es **Clases**, crea un evento con hora en
-   Google Calendar; si es **Asesoría**, crea un evento de todo el día en la
-   fecha límite.
-3. Envía un correo de confirmación por Gmail (con un `.ics` adjunto).
-4. Marca la fila como `confirmado` en Notion.
+1. Queries a Notion database for new or unprocessed rows.
+2. For each row: if its `Type` property is a scheduled-session type, creates
+   a timed Google Calendar event; if it's a deadline type, creates an
+   all-day event on that date.
+3. Sends a confirmation email (with an `.ics` attachment).
+4. Marks the row as confirmed back in Notion.
 
-El formulario en sí vive en NoteForms (plan gratis, sin webhooks) y ya
-escribe directamente en la base de Notion — este repo no recibe nada de
-NoteForms, solo lee y actualiza Notion por polling.
+The form itself lives in an external form builder that already writes
+directly into a Notion database (that connection is the form builder's own
+Notion integration). This repo never talks to the form builder — it only
+reads and updates Notion by polling.
 
-## Por qué polling y no webhook
+## Why polling instead of a webhook
 
-El plan gratis de NoteForms no incluye webhooks salientes. En cambio, el
-formulario ya está conectado nativamente a Notion (esa integración la maneja
-NoteForms). El backend entonces consulta Notion cada pocos minutos por cron
-en vez de esperar una notificación push.
+Some form builders' free tiers don't include outgoing webhooks, but do offer
+a native "save responses to Notion" integration. Instead of waiting for a
+push notification, this service polls the shared Notion database every few
+minutes via cron.
 
-## Estructura
+If your form builder does support webhooks, you don't need this pattern at
+all — a webhook handler is simpler and near-instant. This repo is for the
+case where polling is the only option.
+
+## Structure
 
 ```
-scripts/poll_notion.py       # entry point: corre un ciclo completo de polling
-lib/config.py                # carga y valida variables de entorno
-lib/schemas.py                # parsea una fila (página) de Notion a un objeto tipado
-lib/notion_client.py           # consulta filas pendientes + marca como procesadas
-lib/calendar_client.py          # crea eventos en Google Calendar
-lib/ics.py                       # genera el adjunto .ics
-lib/email_client.py               # envía el correo por Gmail SMTP (texto fácil de editar)
-.github/workflows/poll.yml        # cron cada 15 minutos
-tests/                              # pytest, mockea todas las APIs externas
+scripts/poll_notion.py       # entry point: runs one full polling cycle
+lib/config.py                # loads and validates environment variables
+lib/schemas.py                # parses a Notion row (page) into a typed object
+lib/notion_client.py           # queries pending rows + marks them as processed
+lib/calendar_client.py          # creates events in Google Calendar
+lib/ics.py                       # builds the .ics attachment
+lib/email_client.py               # sends the email via Gmail SMTP (copy is easy to edit)
+.github/workflows/poll.yml        # cron every 15 minutes
+tests/                              # pytest, mocks every external API
 ```
 
-## Decisiones clave
+## Key decisions
 
-- **Scheduling: GitHub Actions**, no Vercel Cron ni cron-job.org. El workflow
-  ejecuta `scripts/poll_notion.py` directo — no hace falta desplegar nada
-  como servicio web. Vercel Cron en el plan Hobby (gratis) limita los cron
-  jobs a una corrida por día, insuficiente para "cada pocos minutos" sin
-  pasar a Pro (US$20/mes). Con el repo **privado**, un intervalo de 15
-  minutos entra holgado en los 2000 minutos/mes gratis de Actions; si en
-  algún momento el repo pasa a público, los minutos son ilimitados y se
-  puede bajar a 5 minutos. Riesgo conocido: GitHub desactiva los workflows
-  programados tras 60 días sin commits en el repo, y en horas pico puede
-  correrlos con algo de retraso — aceptable para este caso de uso.
-- **Asesoría sí crea evento** (de todo el día, en la fecha límite), además de
-  guardar en Notion y mandar el correo — así también queda una alerta visual
-  en tu calendario, no solo en Notion.
-- **Google Calendar vía service account**, no OAuth: automatización
-  desatendida sin mantener vivo un refresh token. Compartiste tu calendario
-  personal con el email de la cuenta de servicio con permiso de "hacer
-  cambios en los eventos" — confirmado. Como contrapartida, **no se agregan
-  invitados (`attendees`) a los eventos**: las service accounts sin
-  Domain-Wide Delegation no pueden invitar asistentes en calendarios ajenos;
-  la confirmación al cliente/alumno va solo por email con el `.ics` adjunto.
-- **Idempotencia sin columna de submission id**: como ahora se lee Notion
-  directamente (no un payload externo), el `page_id` que ya trae cada fila
-  alcanza como clave única. La columna `Submission ID` que había quedado del
-  diseño anterior no se usa (podés borrarla si querés, o dejarla vacía sin
-  problema). Cada paso se trackea por separado (`Calendar Event ID`, `Email
-  Enviado`), así que si una corrida falla a la mitad, la siguiente corrida
-  retoma solo lo que faltó, sin duplicar nada.
-- **Nombres de propiedades**: confirmados contra la base real vía la API
-  (ver sección siguiente). Notá que la columna de fecha se llama `"Fecha "`
-  **con un espacio al final** — así está hoy en Notion. Si la renombrás para
-  sacarle el espacio, actualizá `PROP_FECHA` en `lib/schemas.py`.
-- **Filas incompletas no rompen la corrida**: si una fila no tiene todavía
-  `Nombre`/`Correo`/`Tipo`/`Fecha` (por ejemplo, mientras NoteForms la está
-  escribiendo, o una fila de prueba creada a mano), se loggea como fila
-  inválida y se sigue con las demás. Esa fila va a reaparecer en cada corrida
-  hasta que se completen los campos o se borre — es un comportamiento
-  esperado, no un bug.
-- **Gmail en vez de Resend**: no hay un dominio propio verificado, y Resend
-  en modo prueba solo deja mandar correo a la propia dirección registrada —
-  no sirve para mandarle confirmaciones a clientes reales. Gmail (vía SMTP +
-  App Password) no exige dominio para mandar a cualquier destinatario, es
-  gratis, y ya tenés la cuenta. Contras conocidos: el remitente se ve como un
-  Gmail personal en vez de una dirección de marca, y el límite de envío de
-  Gmail es de ~500 correos/día en una cuenta personal (muy por encima del
-  volumen esperado acá). Si más adelante conseguís un dominio propio, se
-  puede volver a un proveedor transaccional sin tocar el resto del código —
-  el único punto de cambio es `lib/email_client.py`.
+- **Scheduling: GitHub Actions**, not a hosted cron service or a platform's
+  built-in cron. The workflow runs `scripts/poll_notion.py` directly — there's
+  no web service to deploy. Some platforms' free tiers restrict cron jobs to
+  once a day, which isn't enough for "every few minutes" without a paid plan.
+  On a **private** repo, a 15-minute interval comfortably fits GitHub
+  Actions' 2000 free minutes/month; on a public repo, minutes are unlimited,
+  so you can drop to 5 minutes. Known trade-off: GitHub disables scheduled
+  workflows after 60 days without a commit to the repo, and can run them a
+  bit late during peak load — acceptable for this kind of use case.
+- **Google Calendar via a service account**, not OAuth: unattended
+  automation without having to keep a refresh token alive. You share your
+  calendar with the service account's email, granting "make changes to
+  events". Trade-off: **no attendees are added to events** — service
+  accounts without Domain-Wide Delegation can't invite attendees on
+  calendars they don't own; the client's confirmation goes out by email with
+  the `.ics` attached instead.
+- **Idempotency without a submission-id column**: since Notion is read
+  directly (not an external payload), the `page_id` each query already
+  returns works as the unique key. Each step is tracked separately
+  (`Calendar Event ID`, `Email Sent`), so if a run fails halfway through, the
+  next run only retries what's missing — nothing gets duplicated.
+- **Incomplete rows don't break the run**: if a row is still missing
+  `Name`/`Email`/`Type`/`Date` (e.g. while the form builder is still writing
+  it, or a manually created test row), it's logged as an invalid row and the
+  run continues with the rest. That row will keep showing up on every run
+  until the fields are filled in or the row is deleted — expected behavior,
+  not a bug.
+- **Gmail instead of a transactional email provider**: sending through a
+  provider like Resend/SendGrid usually requires a verified custom domain to
+  send to arbitrary recipients — fine for many setups, but not always
+  available. Gmail (via SMTP + an App Password) sends to any recipient
+  without a domain, for free. Trade-offs: the sender looks like a personal
+  Gmail address rather than a branded one, and a personal Gmail account caps
+  at roughly 500 sends/day (far above what a small intake form needs). If
+  you later get a verified domain, swap providers by editing only
+  `lib/email_client.py` — nothing else depends on it.
 
-## Encontrar el data source id de Notion
+This repo also currently powers a real deployment for a Spanish-speaking
+solo consulting business. A few literal values reflect that live setup and
+are meant to be adjusted for your own case:
+- The confirmation email copy (`lib/email_client.py`) is in Spanish.
+- The Notion `Type` select options are matched by substring (`"asesor"` /
+  `"clase"` in `lib/schemas.py`) against Spanish option values. If your
+  Notion select uses different option values, update that matching logic.
+- The Calendar event titles/descriptions are in Spanish.
+- The default `TIMEZONE` in `.env.example` is `America/Costa_Rica`.
 
-Este proyecto usa la versión actual de la API de Notion, donde las
-propiedades y filas de una base viven en un **data source** (no directamente
-en el "database" contenedor). Para encontrar el id, con `NOTION_TOKEN` ya
-configurado en el entorno:
+## Notion database schema
+
+Example property names used by `lib/schemas.py` (adjust `PROP_*` constants
+there if your database uses different ones):
+
+| Property             | Type         | Notes                                          |
+|------------------------|--------------|---------------------------------------------------|
+| Nombre (Name)           | title        |                                                     |
+| Tipo (Type)              | select       | two option values, matched by substring            |
+| Correo (Email)            | email        |                                                     |
+| `Fecha ` (Date)            | date         | deadline (advisory type) or date/time (class type) |
+| Estado (Status)              | select       | e.g. `nuevo` (new) / `confirmado` (confirmed)      |
+| Calendar Event ID              | rich text    | written by this service, don't edit by hand        |
+| Email Enviado (Email Sent)        | checkbox     | written by this service                             |
+| Creado (Created)                    | created time |                                                       |
+
+**Important**: whatever form builder writes to your database, make sure it
+targets *this* database (the one with the columns above), not a separate
+auto-generated one some form builders create by default when you first
+connect a Notion integration.
+
+## Finding the Notion data source id
+
+This project targets the current Notion API, where a database's properties
+and rows live in a **data source** (not directly on the "database"
+container). To find the id, with `NOTION_TOKEN` already set in your
+environment:
 
 ```bash
 python3 - <<'EOF'
@@ -100,7 +124,7 @@ from notion_client import Client
 
 client = Client(auth=os.environ["NOTION_TOKEN"])
 results = client.search(
-    query="Solicitudes ACV",
+    query="<your database name>",
     filter={"property": "object", "value": "data_source"},
 )["results"]
 for r in results:
@@ -109,75 +133,53 @@ for r in results:
 EOF
 ```
 
-Ese id es `NOTION_DATA_SOURCE_ID`.
+That id is `NOTION_DATA_SOURCE_ID`.
 
-## Modelo de datos en Notion
-
-Propiedades reales de la base "Solicitudes ACV" (confirmadas vía API):
-
-| Propiedad           | Tipo         | Notas                                              |
-|----------------------|--------------|-----------------------------------------------------|
-| Nombre               | title        |                                                       |
-| Tipo                  | select       | opciones: `Asesoría`, `Clases`                       |
-| Correo                | email        |                                                       |
-| `Fecha ` (con espacio)| date         | fecha límite (Asesoría) o fecha/hora (Clases)        |
-| Estado                | select       | opciones: `nuevo`, `confirmado`                      |
-| Calendar Event ID     | rich text    | lo escribe el backend, no tocar a mano               |
-| Email Enviado         | checkbox     | lo escribe el backend                                |
-| Submission ID         | rich text    | sin uso actualmente (ver "Decisiones clave")         |
-| Creado                | created time |                                                       |
-
-**Importante**: para que el polling funcione, tenés que reconectar el
-formulario en NoteForms para que escriba en **esta** base ("Solicitudes
-ACV") — hoy está escribiendo en otra base autogenerada ("Solicitud de
-asesorías y clases") que no tiene las columnas `Estado`/`Calendar Event
-ID`/`Email Enviado`. En NoteForms: configuración del formulario →
-integración con Notion → cambiar la base de destino a "Solicitudes ACV" y
-mapear los campos (`Nombre completo` → `Nombre`, `Correo electrónico` →
-`Correo`, `Tipo de solicitud` → `Tipo`, `Fecha` → `Fecha `).
-
-## Configurar credenciales
+## Setting up credentials
 
 ### Notion
 
-1. La integración interna "ACV Formulario Backend" ya existe y ya está
-   compartida con la base "Solicitudes ACV" — usá su token como
-   `NOTION_TOKEN`.
-2. Sacá `NOTION_DATA_SOURCE_ID` con el script de la sección anterior.
+1. Create an internal integration at
+   [notion.so/my-integrations](https://www.notion.so/my-integrations), copy
+   its secret as `NOTION_TOKEN`.
+2. Share your target database with that integration (`...` menu on the
+   database → `Connections` → add the integration).
+3. Get `NOTION_DATA_SOURCE_ID` with the script above.
 
 ### Google Calendar (service account)
 
-Ya creaste la cuenta de servicio (`calendar-writer@...iam.gserviceaccount.com`)
-y compartiste tu calendario con permiso de "hacer cambios en los eventos".
-Falta:
+1. In [Google Cloud Console](https://console.cloud.google.com/), enable the
+   **Google Calendar API** on a project.
+2. `IAM & Admin` → `Service Accounts` → create one (no project roles
+   needed).
+3. On that service account → `Keys` → `Add key` → JSON. Download the file.
+4. Minify that JSON to a single line (or base64-encode it) and paste it as
+   `GOOGLE_SERVICE_ACCOUNT_JSON`. `lib/config.py` accepts either format.
+5. In Google Calendar, share the calendar you want events created on with
+   the service account's email (`client_email` in the JSON, ends in
+   `...iam.gserviceaccount.com`), granting "Make changes to events".
+6. `GOOGLE_CALENDAR_ID` is that calendar's id — for your primary calendar
+   it's just your email address.
 
-1. En Google Cloud Console → la cuenta de servicio → `Claves` → `Agregar
-   clave` → JSON (si todavía no descargaste el archivo).
-2. Minificá ese JSON a una sola línea (o codificalo en base64) y pegalo como
-   `GOOGLE_SERVICE_ACCOUNT_JSON`. `lib/config.py` acepta ambos formatos.
-3. `GOOGLE_CALENDAR_ID` es tu email (`andrescubillo07@gmail.com`) si es tu
-   calendario principal.
+### Gmail (sending email)
 
-### Gmail (envío de correo)
-
-1. En la cuenta de Gmail que va a mandar los correos (`andrescubillo07@gmail.com`),
-   activá la verificación en 2 pasos si todavía no la tenés:
-   [myaccount.google.com/security](https://myaccount.google.com/security) →
-   `Verificación en 2 pasos`.
-2. Con eso activado, andá a
+1. On the Gmail account that will send the emails, enable 2-Step
+   Verification if you haven't:
+   [myaccount.google.com/security](https://myaccount.google.com/security).
+2. With that on, go to
    [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords)
-   → creá una App Password nueva (cualquier nombre, ej. "ACV backend") →
-   Google te muestra un código de 16 caracteres una sola vez.
-3. Ese código (sin espacios o con ellos, da igual) va en
-   `GMAIL_APP_PASSWORD`. `GMAIL_ADDRESS` es la misma dirección de Gmail.
-4. No hay modo prueba ni restricción de destinatario: podés mandar a
-   cualquier correo desde el primer envío.
+   → create a new App Password (any name works) → Google shows you a
+   16-character code once.
+3. That code goes in `GMAIL_APP_PASSWORD`. `GMAIL_ADDRESS` is the same Gmail
+   address.
+4. No sandbox mode, no recipient restriction — you can send to anyone from
+   the first send.
 
-El texto de los correos está en `lib/email_client.py`, en las funciones
-`_asesoria_email` y `_clases_email` — son las únicas dos funciones a editar
-si querés cambiar el copy.
+The email copy lives in `lib/email_client.py`, in the `_advisory_email` and
+`_class_email` functions — those are the only two places to edit if you want
+to change the wording.
 
-## Probar en local
+## Testing locally
 
 ```bash
 python3 -m venv .venv
@@ -185,27 +187,26 @@ source .venv/bin/activate
 pip install -r requirements-dev.txt
 
 cp .env.example .env
-# completar .env con credenciales reales
+# fill in .env with real credentials
 
-pytest              # corre toda la suite (mockea las APIs externas)
+pytest              # runs the full suite (mocks every external API)
 
-python scripts/poll_notion.py   # corre un ciclo real contra Notion/Calendar/Gmail
+python scripts/poll_notion.py   # runs one real cycle against Notion/Calendar/Gmail
 ```
 
-## Programar la corrida (GitHub Actions)
+## Scheduling the run (GitHub Actions)
 
-1. En el repo de GitHub: `Settings` → `Secrets and variables` → `Actions` →
-   agregar como secrets: `NOTION_TOKEN`, `NOTION_DATA_SOURCE_ID`,
-   `GMAIL_ADDRESS`, `GMAIL_APP_PASSWORD`, `GOOGLE_SERVICE_ACCOUNT_JSON`,
-   `GOOGLE_CALENDAR_ID`.
-2. El workflow `.github/workflows/poll.yml` ya está configurado para correr
-   cada 15 minutos (`workflow_dispatch` también permite correrlo a mano desde
-   la pestaña Actions para probar).
-3. Hacé push del repo a GitHub — el cron arranca solo desde ahí, no hace
-   falta ningún paso de "deploy" adicional.
+1. In the GitHub repo: `Settings` → `Secrets and variables` → `Actions` →
+   add as secrets: `NOTION_TOKEN`, `NOTION_DATA_SOURCE_ID`, `GMAIL_ADDRESS`,
+   `GMAIL_APP_PASSWORD`, `GOOGLE_SERVICE_ACCOUNT_JSON`,
+   `GOOGLE_CALENDAR_ID`, `BUSINESS_NAME`, `TIMEZONE`.
+2. `.github/workflows/poll.yml` is already set up to run every 15 minutes
+   (`workflow_dispatch` also lets you trigger it manually from the Actions
+   tab to test).
+3. Push the repo to GitHub — the cron starts on its own from there, no
+   separate "deploy" step needed.
 
-## Desplegar
+## Deploying
 
-No hay que desplegar nada: GitHub Actions **es** la infraestructura de
-ejecución. Solo hace falta pushear el repo con el workflow y los secrets
-configurados (paso anterior).
+There's nothing to deploy: GitHub Actions **is** the runtime. Just push the
+repo with the workflow and secrets configured (previous section).

@@ -1,6 +1,6 @@
-"""Carga y validacion de configuracion desde variables de entorno.
+"""Loads and validates configuration from environment variables.
 
-Nunca hardcodear secretos: todo entra por env vars (ver .env.example).
+Never hardcode secrets: everything comes in via env vars (see .env.example).
 """
 
 from __future__ import annotations
@@ -17,40 +17,42 @@ class ConfigError(RuntimeError):
 def _require(name: str) -> str:
     value = os.environ.get(name)
     if not value:
-        raise ConfigError(f"Falta la variable de entorno {name}")
+        raise ConfigError(f"Missing environment variable {name}")
     return value
 
 
 class Config:
     def __init__(self) -> None:
         self.notion_token = _require("NOTION_TOKEN")
-        # La API de Notion (2025-09-03+) separa "database" de "data source":
-        # las propiedades y las filas viven en el data source, no en el
-        # database contenedor. Este id se obtuvo consultando la base
-        # "Solicitudes ACV" via la API (ver README).
+        # The Notion API (2025-09-03+) splits "database" from "data source":
+        # properties and rows live in the data source, not the database
+        # container itself (see README).
         self.notion_data_source_id = _require("NOTION_DATA_SOURCE_ID")
 
-        # Envio de correo via Gmail (SMTP + App Password) en vez de un
-        # proveedor transaccional: no hay dominio propio verificado, y Gmail
-        # no lo exige para mandar a cualquier destinatario.
+        # Email is sent via Gmail (SMTP + App Password) instead of a
+        # transactional provider: there's no verified custom domain, and
+        # Gmail doesn't require one to send to arbitrary recipients.
         self.gmail_address = _require("GMAIL_ADDRESS")
         self.gmail_app_password = _require("GMAIL_APP_PASSWORD")
 
         self.google_service_account_json = _require("GOOGLE_SERVICE_ACCOUNT_JSON")
         self.google_calendar_id = _require("GOOGLE_CALENDAR_ID")
 
-        self.timezone = os.environ.get("TIMEZONE", "America/Costa_Rica")
+        # Display name used in the confirmation emails (see lib/email_client.py).
+        self.business_name = os.environ.get("BUSINESS_NAME", "your business")
+
+        self.timezone = os.environ.get("TIMEZONE", "UTC")
         self.class_duration_minutes = int(os.environ.get("CLASS_DURATION_MINUTES", "60"))
-        self.create_asesoria_calendar_event = (
-            os.environ.get("ASESORIA_CREATE_CALENDAR_EVENT", "true").lower() == "true"
+        self.create_advisory_calendar_event = (
+            os.environ.get("ADVISORY_CREATE_CALENDAR_EVENT", "true").lower() == "true"
         )
 
     def google_credentials_info(self) -> dict:
         raw = self.google_service_account_json.strip()
         if not raw.startswith("{"):
-            # Soporta pegar el JSON del service account en base64, util para
-            # evitar problemas de escaping de saltos de linea al cargarlo
-            # como GitHub Actions secret.
+            # Accepts the service account JSON as base64, useful to avoid
+            # newline-escaping issues when pasting it as a GitHub Actions
+            # secret.
             raw = base64.b64decode(raw).decode()
         return json.loads(raw)
 
@@ -66,6 +68,6 @@ def get_config() -> Config:
 
 
 def reset_config_cache() -> None:
-    """Solo para tests: fuerza a que la proxima get_config() relea el entorno."""
+    """Test-only: forces the next get_config() call to re-read the environment."""
     global _config
     _config = None

@@ -1,10 +1,10 @@
-"""Repositorio Notion para el modelo de polling.
+"""Notion repository for the polling model.
 
-No hace falta buscar filas por id de envio: cada corrida consulta
-directamente las filas pendientes (Estado vacio/"nuevo" o Email Enviado sin
-marcar) y el propio `page_id` que trae esa consulta sirve como clave de
-idempotencia. "Calendar Event ID" evita crear el evento dos veces si el
-envio de email fallo en una corrida anterior y la fila se reintenta.
+No need to look up rows by a submission id: every run queries directly for
+pending rows (Status empty/"nuevo" or Email Sent unchecked), and the
+`page_id` that query already returns works as the idempotency key.
+"Calendar Event ID" prevents creating the event twice if the email send
+failed in a previous run and the row gets retried.
 """
 
 from __future__ import annotations
@@ -15,10 +15,10 @@ from notion_client import Client
 
 from .schemas import (
     PROP_CALENDAR_EVENT_ID,
-    PROP_EMAIL_ENVIADO,
-    PROP_ESTADO,
-    ESTADO_CONFIRMADO,
-    ESTADO_NUEVO,
+    PROP_EMAIL_SENT,
+    PROP_STATUS,
+    STATUS_CONFIRMED,
+    STATUS_NEW,
 )
 
 
@@ -32,9 +32,9 @@ class NotionRepository:
             data_source_id=self._data_source_id,
             filter={
                 "or": [
-                    {"property": PROP_ESTADO, "select": {"is_empty": True}},
-                    {"property": PROP_ESTADO, "select": {"equals": ESTADO_NUEVO}},
-                    {"property": PROP_EMAIL_ENVIADO, "checkbox": {"equals": False}},
+                    {"property": PROP_STATUS, "select": {"is_empty": True}},
+                    {"property": PROP_STATUS, "select": {"equals": STATUS_NEW}},
+                    {"property": PROP_EMAIL_SENT, "checkbox": {"equals": False}},
                 ]
             },
         )
@@ -50,7 +50,7 @@ class NotionRepository:
         self._client.pages.update(
             page_id=page_id,
             properties={
-                PROP_EMAIL_ENVIADO: {"checkbox": True},
-                PROP_ESTADO: {"select": {"name": ESTADO_CONFIRMADO}},
+                PROP_EMAIL_SENT: {"checkbox": True},
+                PROP_STATUS: {"select": {"name": STATUS_CONFIRMED}},
             },
         )

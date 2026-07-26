@@ -1,8 +1,8 @@
-from datetime import date, datetime
+from datetime import date
 
 import pytest
 
-from lib.schemas import AsesoriaSubmission, ClasesSubmission, RowError, submission_from_page
+from lib.schemas import AdvisorySubmission, ClassSubmission, RowError, submission_from_page
 
 
 def _page(page_id="page-1", **overrides):
@@ -18,18 +18,18 @@ def _page(page_id="page-1", **overrides):
     return {"id": page_id, "properties": properties}
 
 
-def test_parse_asesoria_page():
+def test_parse_advisory_page():
     submission = submission_from_page(_page())
 
-    assert isinstance(submission, AsesoriaSubmission)
+    assert isinstance(submission, AdvisorySubmission)
     assert submission.page_id == "page-1"
-    assert submission.nombre == "Ana Lopez"
-    assert submission.fecha == date(2026, 8, 1)
+    assert submission.name == "Ana Lopez"
+    assert submission.deadline == date(2026, 8, 1)
     assert submission.calendar_event_id is None
-    assert submission.email_enviado is False
+    assert submission.email_sent is False
 
 
-def test_parse_clases_page():
+def test_parse_class_page():
     page = _page(
         Tipo={"select": {"name": "Clases"}},
         **{"Fecha ": {"date": {"start": "2026-08-02T15:30:00.000-06:00"}}},
@@ -37,9 +37,9 @@ def test_parse_clases_page():
 
     submission = submission_from_page(page)
 
-    assert isinstance(submission, ClasesSubmission)
-    assert submission.fecha_hora.hour == 15
-    assert submission.fecha_hora.minute == 30
+    assert isinstance(submission, ClassSubmission)
+    assert submission.scheduled_at.hour == 15
+    assert submission.scheduled_at.minute == 30
 
 
 def test_parse_page_with_existing_calendar_event_and_email_sent():
@@ -53,7 +53,7 @@ def test_parse_page_with_existing_calendar_event_and_email_sent():
     submission = submission_from_page(page)
 
     assert submission.calendar_event_id == "evt-123"
-    assert submission.email_enviado is True
+    assert submission.email_sent is True
 
 
 def test_missing_required_field_raises():
@@ -63,7 +63,7 @@ def test_missing_required_field_raises():
 
 
 def test_empty_placeholder_row_raises():
-    """Una fila creada a mano en Notion, sin datos de NoteForms todavia."""
+    """A row created by hand in Notion, without data from the form yet."""
     page = {
         "id": "page-empty",
         "properties": {
@@ -79,13 +79,13 @@ def test_empty_placeholder_row_raises():
         submission_from_page(page)
 
 
-def test_unknown_tipo_raises():
+def test_unknown_type_raises():
     page = _page(Tipo={"select": {"name": "Otro"}})
     with pytest.raises(RowError):
         submission_from_page(page)
 
 
 def test_invalid_date_raises():
-    page = _page(**{"Fecha ": {"date": {"start": "no es una fecha"}}})
+    page = _page(**{"Fecha ": {"date": {"start": "not a date"}}})
     with pytest.raises(RowError):
         submission_from_page(page)
