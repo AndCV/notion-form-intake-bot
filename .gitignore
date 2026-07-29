@@ -6,3 +6,5 @@ __pycache__/
 .vercel/
 venv/
 .venv/
+sample_invoice.pdf
+sample_invoice.png

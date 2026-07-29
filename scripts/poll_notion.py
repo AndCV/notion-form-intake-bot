@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import sys
+from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -20,8 +21,9 @@ load_dotenv()
 
 from lib.calendar_client import CalendarRepository
 from lib.config import Config, get_config
-from lib.email_client import send_confirmation_email
+from lib.email_client import send_confirmation_email, send_invoice_email
 from lib.ics import build_ics
+from lib.invoicing import build_invoice_pdf, format_invoice_number
 from lib.notion_client import NotionRepository
 from lib.schemas import AdvisorySubmission, ClassSubmission, RowError, submission_from_page
 
@@ -57,6 +59,17 @@ def process_page(config: Config, notion: NotionRepository, page: dict) -> None:
 
     notion.mark_confirmed(page_id)
     logger.info("Row marked as confirmed (page_id=%s)", page_id)
+
+    if submission.price is not None and not submission.invoice_sent:
+        invoice_number = format_invoice_number(notion.get_last_invoice_number() + 1)
+        pdf_bytes = build_invoice_pdf(config, submission, invoice_number, date.today())
+        send_invoice_email(
+            config.gmail_address, config.gmail_app_password, submission, pdf_bytes, invoice_number
+        )
+        notion.mark_invoiced(page_id, invoice_number)
+        logger.info(
+            "Invoice %s generated and sent (page_id=%s)", invoice_number, page_id
+        )
 
 
 def run() -> None:

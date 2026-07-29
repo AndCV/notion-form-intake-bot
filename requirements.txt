@@ -7,3 +7,8 @@ google-auth>=2.23.0,<3
 icalendar>=5.0.11,<6
 python-dateutil>=2.8.2,<3
 python-dotenv>=1.0.0,<2
+jinja2>=3.1.2,<4
+# WeasyPrint needs system libraries (Pango, cairo, GDK-PixBuf) -- see the
+# apt-get step in .github/workflows/poll.yml and the README's local-setup
+# section for the equivalent on macOS/Linux.
+weasyprint>=62.0,<71

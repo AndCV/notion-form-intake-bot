@@ -16,6 +16,8 @@ from notion_client import Client
 from .schemas import (
     PROP_CALENDAR_EVENT_ID,
     PROP_EMAIL_SENT,
+    PROP_INVOICE_NUMBER,
+    PROP_INVOICE_SENT,
     PROP_STATUS,
     STATUS_CONFIRMED,
     STATUS_NEW,
@@ -52,5 +54,36 @@ class NotionRepository:
             properties={
                 PROP_EMAIL_SENT: {"checkbox": True},
                 PROP_STATUS: {"select": {"name": STATUS_CONFIRMED}},
+            },
+        )
+
+    def get_last_invoice_number(self) -> int:
+        """Highest already-assigned invoice number, or 0 if none yet.
+
+        Invoice numbers are zero-padded to a fixed width, so sorting the
+        property as text gives the same order as sorting it numerically.
+        This reads the existing database as the single source of truth
+        instead of keeping a separate counter, so a number is only ever
+        "used" once an invoice is actually generated -- rows that never get
+        invoiced don't create gaps.
+        """
+        response = self._client.data_sources.query(
+            data_source_id=self._data_source_id,
+            filter={"property": PROP_INVOICE_NUMBER, "rich_text": {"is_not_empty": True}},
+            sorts=[{"property": PROP_INVOICE_NUMBER, "direction": "descending"}],
+            page_size=1,
+        )
+        results = response.get("results", [])
+        if not results:
+            return 0
+        rich_text = results[0]["properties"][PROP_INVOICE_NUMBER]["rich_text"]
+        return int(rich_text[0]["plain_text"])
+
+    def mark_invoiced(self, page_id: str, invoice_number: str) -> None:
+        self._client.pages.update(
+            page_id=page_id,
+            properties={
+                PROP_INVOICE_NUMBER: {"rich_text": [{"text": {"content": invoice_number}}]},
+                PROP_INVOICE_SENT: {"checkbox": True},
             },
         )

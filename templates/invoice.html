@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Factura {{ invoice_number }}</title>
+<style>
+    @page {
+        size: A4;
+        margin: 0;
+    }
+
+    * {
+        box-sizing: border-box;
+    }
+
+    body {
+        margin: 0;
+        font-family: "Liberation Sans", Arial, Helvetica, sans-serif;
+        color: #1a1a1a;
+    }
+
+    .page {
+        position: relative;
+        width: 210mm;
+        height: 297mm;
+        overflow: hidden;
+    }
+
+    .background {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 210mm;
+        height: 297mm;
+        z-index: 0;
+    }
+
+    .content {
+        position: relative;
+        z-index: 1;
+        padding: 36mm 19mm 46mm 19mm;
+    }
+
+    .header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 9mm;
+    }
+
+    .issuer-name {
+        font-size: 22pt;
+        font-weight: bold;
+        color: #0F226F;
+        margin: 0;
+    }
+
+    .issuer-tagline {
+        font-size: 9pt;
+        color: #6A6F86;
+        margin: 1mm 0 0 0;
+    }
+
+    .invoice-title {
+        text-align: right;
+    }
+
+    .invoice-title h1 {
+        font-size: 30pt;
+        color: #0F226F;
+        margin: 0;
+        letter-spacing: 1px;
+    }
+
+    .invoice-title .accent {
+        display: inline-block;
+        width: 32mm;
+        height: 1mm;
+        background: #3CCACF;
+        margin-top: 2mm;
+    }
+
+    .info-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 8mm;
+    }
+
+    .bill-to .label {
+        font-weight: bold;
+        color: #0F226F;
+        font-size: 10pt;
+        margin-bottom: 2mm;
+    }
+
+    .bill-to .client-name {
+        font-size: 13pt;
+        font-weight: bold;
+    }
+
+    .meta-table {
+        text-align: right;
+        font-size: 10pt;
+    }
+
+    .meta-table div {
+        margin-bottom: 1.5mm;
+    }
+
+    .meta-table .meta-label {
+        font-weight: bold;
+        color: #0F226F;
+    }
+
+    table.items {
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 0 1.5mm;
+        margin-bottom: 7mm;
+    }
+
+    table.items thead th {
+        background: #0F226F;
+        color: #ffffff;
+        font-size: 9pt;
+        text-align: left;
+        padding: 3mm 3mm;
+    }
+
+    table.items thead th.num { text-align: center; width: 12mm; }
+    table.items thead th.price,
+    table.items thead th.total { text-align: right; width: 26mm; }
+    table.items thead th.qty { text-align: center; width: 16mm; }
+
+    table.items tbody td {
+        background: #EEF0F6;
+        font-size: 10pt;
+        padding: 3.5mm 3mm;
+    }
+
+    table.items tbody td.num { text-align: center; }
+    table.items tbody td.price,
+    table.items tbody td.total { text-align: right; }
+    table.items tbody td.qty { text-align: center; }
+
+    .bottom-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-top: 4mm;
+    }
+
+    .payment-terms {
+        width: 52%;
+    }
+
+    .payment-terms .label {
+        font-weight: bold;
+        color: #0F226F;
+        font-size: 10pt;
+        margin-bottom: 2mm;
+    }
+
+    .payment-terms table {
+        font-size: 9.5pt;
+        margin-bottom: 6mm;
+    }
+
+    .payment-terms table td:first-child {
+        color: #6A6F86;
+        padding-right: 4mm;
+    }
+
+    .terms-text {
+        font-size: 8pt;
+        color: #6A6F86;
+        line-height: 1.4;
+    }
+
+    .totals {
+        width: 40%;
+    }
+
+    .totals .subtotal-row {
+        display: flex;
+        justify-content: space-between;
+        font-size: 10pt;
+        margin-bottom: 4mm;
+    }
+
+    .totals .subtotal-row .label {
+        color: #6A6F86;
+    }
+
+    .totals .total-box {
+        background: #3CCACF;
+        color: #ffffff;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 4mm 4mm;
+        font-weight: bold;
+    }
+
+    .totals .total-box .label {
+        font-size: 10pt;
+    }
+
+    .totals .total-box .value {
+        font-size: 14pt;
+    }
+</style>
+</head>
+<body>
+<div class="page">
+    <svg class="background" viewBox="0 0 210 297" preserveAspectRatio="none">
+        <!-- top-left layered corner -->
+        <polygon points="0,0 56,0 0,56" fill="#3CCACF" />
+        <polygon points="0,0 43,0 0,43" fill="#0F226F" />
+        <polygon points="0,15 27,15 0,42" fill="#3CCACF" />
+        <polygon points="0,26 16,26 0,42" fill="#0F226F" />
+
+        <!-- top-right accent -->
+        <polygon points="210,0 193,0 210,17" fill="#3CCACF" />
+
+        <!-- bottom band -->
+        <polygon points="0,270 210,275 210,297 0,297" fill="#353E81" />
+        <polygon points="0,276 64,276 96,297 0,297" fill="#0F226F" />
+        <polygon points="0,276 9,276 0,285" fill="#3CCACF" />
+        <polygon points="210,297 178,297 210,282" fill="#3CCACF" />
+
+        <!-- contact icons -->
+        <g fill="#ffffff">
+            <!-- phone -->
+            <path d="M 15 281.5 c 0 -0.9 0.7 -1.6 1.6 -1.4 l 1.6 0.4 c 0.7 0.2 1 1 0.6 1.6 l -0.5 0.8
+                     c 0.4 0.7 1.1 1.4 1.8 1.8 l 0.8 -0.5 c 0.6 -0.4 1.4 -0.1 1.6 0.6 l 0.4 1.6
+                     c 0.2 0.9 -0.5 1.6 -1.4 1.6 c -3 0 -6.5 -3.5 -6.5 -6.5 z" />
+            <!-- envelope -->
+            <g transform="translate(15,287.3)">
+                <rect x="0" y="0" width="5.4" height="3.4" fill="none" stroke="#ffffff" stroke-width="0.5"/>
+                <path d="M 0 0 L 2.7 2.2 L 5.4 0" fill="none" stroke="#ffffff" stroke-width="0.5"/>
+            </g>
+            <!-- pin -->
+            <g transform="translate(104,281.5)">
+                <path d="M 1.3 0 C 2.6 1.6 2.4 2.4 1.3 4 C 0.2 2.4 0 1.6 1.3 0 Z" fill="#ffffff"/>
+                <circle cx="1.3" cy="1.7" r="0.6" fill="#3CCACF"/>
+            </g>
+            <!-- globe -->
+            <g transform="translate(104,287.3)" fill="none" stroke="#ffffff" stroke-width="0.4">
+                <circle cx="1.8" cy="1.7" r="1.8"/>
+                <line x1="0" y1="1.7" x2="3.6" y2="1.7"/>
+                <ellipse cx="1.8" cy="1.7" rx="0.8" ry="1.8"/>
+            </g>
+        </g>
+
+        <g font-family="Liberation Sans, Arial, sans-serif" font-size="3.4" fill="#ffffff">
+            <text x="21" y="283.3">{{ phone }}</text>
+            <text x="21" y="289.1">{{ email }}</text>
+            <text x="110" y="283.3">{{ address }}</text>
+            <text x="110" y="289.1">{{ website }}</text>
+        </g>
+    </svg>
+
+    <div class="content">
+        <div class="header">
+            <div>
+                <p class="issuer-name">{{ issuer_name }}</p>
+                {% if tagline %}<p class="issuer-tagline">{{ tagline }}</p>{% endif %}
+            </div>
+            <div class="invoice-title">
+                <h1>FACTURA</h1>
+                <div class="accent"></div>
+            </div>
+        </div>
+
+        <div class="info-row">
+            <div class="bill-to">
+                <div class="label">FACTURAR A:</div>
+                <div class="client-name">{{ client_name }}</div>
+            </div>
+            <div class="meta-table">
+                <div><span class="meta-label">Factura N.&ordm;:</span> {{ invoice_number }}</div>
+                <div><span class="meta-label">Fecha:</span> {{ issue_date }}</div>
+            </div>
+        </div>
+
+        <table class="items">
+            <thead>
+                <tr>
+                    <th class="num">N.&ordm;</th>
+                    <th>DESCRIPCI&Oacute;N</th>
+                    <th class="price">PRECIO</th>
+                    <th class="qty">CANT.</th>
+                    <th class="total">TOTAL</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td class="num">01</td>
+                    <td>{{ item_description }}</td>
+                    <td class="price">{{ item_price }}</td>
+                    <td class="qty">1</td>
+                    <td class="total">{{ item_total }}</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <div class="bottom-row">
+            <div class="payment-terms">
+                <div class="label">M&Eacute;TODO DE PAGO</div>
+                <table>
+                    <tr><td>Banco:</td><td>{{ payment_method }}</td></tr>
+                </table>
+                <div class="label">T&Eacute;RMINOS Y CONDICIONES</div>
+                <p class="terms-text">
+                    Este documento se emite &uacute;nicamente como comprobante de pago y no
+                    constituye una factura electr&oacute;nica con validez fiscal ante el
+                    Ministerio de Hacienda.
+                </p>
+            </div>
+            <div class="totals">
+                <div class="subtotal-row">
+                    <span class="label">Subtotal:</span>
+                    <span>{{ item_price }}</span>
+                </div>
+                <div class="total-box">
+                    <span class="label">TOTAL</span>
+                    <span class="value">{{ item_total }}</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>

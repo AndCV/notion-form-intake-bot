@@ -89,3 +89,32 @@ def send_confirmation_email(
         server.starttls()
         server.login(gmail_address, gmail_app_password)
         server.sendmail(gmail_address, [submission.email], message.as_string())
+
+
+def send_invoice_email(
+    gmail_address: str,
+    gmail_app_password: str,
+    submission: Submission,
+    pdf_bytes: bytes,
+    invoice_number: str,
+) -> None:
+    message = MIMEMultipart("mixed")
+    message["Subject"] = f"Factura {invoice_number}"
+    message["From"] = gmail_address
+    message["To"] = submission.email
+    message.attach(
+        MIMEText(f"<p>Hola {submission.name},</p><p>Adjuntamos tu factura.</p>", "html")
+    )
+
+    attachment = MIMEBase("application", "pdf")
+    attachment.set_payload(pdf_bytes)
+    encoders.encode_base64(attachment)
+    attachment.add_header(
+        "Content-Disposition", "attachment", filename=f"factura-{invoice_number}.pdf"
+    )
+    message.attach(attachment)
+
+    with smtplib.SMTP("smtp.gmail.com", 587) as server:
+        server.starttls()
+        server.login(gmail_address, gmail_app_password)
+        server.sendmail(gmail_address, [submission.email], message.as_string())

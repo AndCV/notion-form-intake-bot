@@ -8,6 +8,14 @@ on:
     - cron: "*/15 * * * *"
   workflow_dispatch: {}
 
+# Prevents two runs from overlapping. Invoice numbers are computed from
+# "the highest one already in Notion" (see NotionRepository.get_last_invoice_number),
+# so two concurrent runs could read the same "last number" and hand out a
+# duplicate -- this guarantees only one run executes at a time.
+concurrency:
+  group: poll-notion
+  cancel-in-progress: false
+
 jobs:
   poll:
     runs-on: ubuntu-latest
@@ -19,6 +27,15 @@ jobs:
         with:
           python-version: "3.12"
           cache: "pip"
+
+      # System libraries WeasyPrint needs to render HTML/CSS to PDF
+      # (Pango, cairo, GDK-PixBuf), plus a metric-compatible Arial/Helvetica
+      # substitute for the invoice template.
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libpango-1.0-0 libpangocairo-1.0-0 libcairo2 \
+            libgdk-pixbuf2.0-0 libffi-dev shared-mime-info fonts-liberation
 
       - run: pip install -r requirements.txt
 
@@ -32,3 +49,11 @@ jobs:
           GOOGLE_CALENDAR_ID: ${{ secrets.GOOGLE_CALENDAR_ID }}
           BUSINESS_NAME: ${{ secrets.BUSINESS_NAME }}
           TIMEZONE: ${{ secrets.TIMEZONE }}
+          INVOICE_ISSUER_NAME: ${{ secrets.INVOICE_ISSUER_NAME }}
+          INVOICE_TAGLINE: ${{ secrets.INVOICE_TAGLINE }}
+          INVOICE_PHONE: ${{ secrets.INVOICE_PHONE }}
+          INVOICE_EMAIL: ${{ secrets.INVOICE_EMAIL }}
+          INVOICE_ADDRESS: ${{ secrets.INVOICE_ADDRESS }}
+          INVOICE_WEBSITE: ${{ secrets.INVOICE_WEBSITE }}
+          INVOICE_PAYMENT_METHOD: ${{ secrets.INVOICE_PAYMENT_METHOD }}
+          INVOICE_CURRENCY_SYMBOL: ${{ secrets.INVOICE_CURRENCY_SYMBOL }}

@@ -42,11 +42,18 @@ class CalendarRepository:
         return self._service.events().insert(calendarId=self._calendar_id, body=body).execute()
 
 
+def _price_line(submission: Submission) -> str:
+    return f"Precio: {submission.price}\n" if submission.price is not None else ""
+
+
 def build_all_day_event_body(submission: AdvisorySubmission) -> dict[str, Any]:
     end = submission.deadline + timedelta(days=1)
     return {
         "summary": f"Entrega asesoria - {submission.name}",
-        "description": f"Fecha limite de entrega para {submission.name} ({submission.email}).",
+        "description": (
+            f"{_price_line(submission)}"
+            f"Fecha limite de entrega para {submission.name} ({submission.email})."
+        ),
         "start": {"date": submission.deadline.isoformat()},
         "end": {"date": end.isoformat()},
     }
@@ -59,7 +66,10 @@ def build_timed_event_body(
     end = start + timedelta(minutes=duration_minutes)
     return {
         "summary": f"Clase - {submission.name}",
-        "description": f"Sesion agendada con {submission.name} ({submission.email}).",
+        "description": (
+            f"{_price_line(submission)}"
+            f"Sesion agendada con {submission.name} ({submission.email})."
+        ),
         "start": {"dateTime": start.isoformat(), "timeZone": timezone},
         "end": {"dateTime": end.isoformat(), "timeZone": timezone},
     }

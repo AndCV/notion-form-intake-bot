@@ -30,6 +30,10 @@ PROP_DATE = "Fecha "
 PROP_STATUS = "Estado"
 PROP_CALENDAR_EVENT_ID = "Calendar Event ID"
 PROP_EMAIL_SENT = "Email Enviado"
+PROP_PRICE = "Precio"
+PROP_DETAIL = "Detalle"
+PROP_INVOICE_NUMBER = "Número de Factura"
+PROP_INVOICE_SENT = "Factura Enviada"
 
 STATUS_NEW = "nuevo"
 STATUS_CONFIRMED = "confirmado"
@@ -75,6 +79,10 @@ def _get_date_start(properties: dict[str, Any], name: str) -> str | None:
     return date_value.get("start") if date_value else None
 
 
+def _get_number(properties: dict[str, Any], name: str) -> float | None:
+    return properties.get(name, {}).get("number")
+
+
 def _parse_date(value: str) -> date:
     try:
         return dateutil_parser.parse(value).date()
@@ -97,6 +105,10 @@ class AdvisorySubmission:
     deadline: date
     calendar_event_id: str | None
     email_sent: bool
+    price: float | None = None
+    detail: str | None = None
+    invoice_number: str | None = None
+    invoice_sent: bool = False
 
 
 @dataclass
@@ -107,6 +119,10 @@ class ClassSubmission:
     scheduled_at: datetime
     calendar_event_id: str | None
     email_sent: bool
+    price: float | None = None
+    detail: str | None = None
+    invoice_number: str | None = None
+    invoice_sent: bool = False
 
 
 Submission = Union[AdvisorySubmission, ClassSubmission]
@@ -122,6 +138,10 @@ def submission_from_page(page: dict[str, Any]) -> Submission:
     date_raw = _get_date_start(properties, PROP_DATE)
     calendar_event_id = _get_rich_text(properties, PROP_CALENDAR_EVENT_ID)
     email_sent = _get_checkbox(properties, PROP_EMAIL_SENT)
+    price = _get_number(properties, PROP_PRICE)
+    detail = _get_rich_text(properties, PROP_DETAIL)
+    invoice_number = _get_rich_text(properties, PROP_INVOICE_NUMBER)
+    invoice_sent = _get_checkbox(properties, PROP_INVOICE_SENT)
 
     if not name or not email or not type_ or not date_raw:
         raise RowError("Missing required fields (name, email, type and/or date) in the row")
@@ -136,6 +156,10 @@ def submission_from_page(page: dict[str, Any]) -> Submission:
             deadline=_parse_date(date_raw),
             calendar_event_id=calendar_event_id,
             email_sent=email_sent,
+            price=price,
+            detail=detail,
+            invoice_number=invoice_number,
+            invoice_sent=invoice_sent,
         )
 
     if "clase" in type_norm:
@@ -146,6 +170,10 @@ def submission_from_page(page: dict[str, Any]) -> Submission:
             scheduled_at=_parse_datetime(date_raw),
             calendar_event_id=calendar_event_id,
             email_sent=email_sent,
+            price=price,
+            detail=detail,
+            invoice_number=invoice_number,
+            invoice_sent=invoice_sent,
         )
 
     raise RowError(f"Unknown request type: {type_!r}")

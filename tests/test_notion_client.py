@@ -45,3 +45,51 @@ def test_mark_confirmed_sets_checkbox_and_select(mocker):
             "Estado": {"select": {"name": "confirmado"}},
         },
     )
+
+
+def test_get_last_invoice_number_parses_highest_existing_number(mocker):
+    fake_client = mocker.Mock()
+    fake_client.data_sources.query.return_value = {
+        "results": [
+            {"properties": {"Número de Factura": {"rich_text": [{"plain_text": "0000042"}]}}}
+        ]
+    }
+    mocker.patch("lib.notion_client.Client", return_value=fake_client)
+
+    repo = NotionRepository("token", "ds-1")
+    result = repo.get_last_invoice_number()
+
+    assert result == 42
+    _, kwargs = fake_client.data_sources.query.call_args
+    assert kwargs["data_source_id"] == "ds-1"
+    assert kwargs["filter"] == {
+        "property": "Número de Factura",
+        "rich_text": {"is_not_empty": True},
+    }
+    assert kwargs["sorts"] == [{"property": "Número de Factura", "direction": "descending"}]
+
+
+def test_get_last_invoice_number_returns_zero_when_none_issued(mocker):
+    fake_client = mocker.Mock()
+    fake_client.data_sources.query.return_value = {"results": []}
+    mocker.patch("lib.notion_client.Client", return_value=fake_client)
+
+    repo = NotionRepository("token", "ds-1")
+
+    assert repo.get_last_invoice_number() == 0
+
+
+def test_mark_invoiced_sets_number_and_checkbox(mocker):
+    fake_client = mocker.Mock()
+    mocker.patch("lib.notion_client.Client", return_value=fake_client)
+
+    repo = NotionRepository("token", "ds-1")
+    repo.mark_invoiced("page-1", "0000043")
+
+    fake_client.pages.update.assert_called_once_with(
+        page_id="page-1",
+        properties={
+            "Número de Factura": {"rich_text": [{"text": {"content": "0000043"}}]},
+            "Factura Enviada": {"checkbox": True},
+        },
+    )

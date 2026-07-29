@@ -47,6 +47,19 @@ class Config:
             os.environ.get("ADVISORY_CREATE_CALENDAR_EVENT", "true").lower() == "true"
         )
 
+        # Invoice PDF content (see lib/invoicing.py / templates/invoice.html).
+        # A row only gets invoiced once it has a price set (see
+        # scripts/poll_notion.py) -- these fields are about the invoice's
+        # letterhead, not any single request.
+        self.invoice_issuer_name = os.environ.get("INVOICE_ISSUER_NAME", "Your Name")
+        self.invoice_tagline = os.environ.get("INVOICE_TAGLINE", "")
+        self.invoice_phone = os.environ.get("INVOICE_PHONE", "")
+        self.invoice_email = os.environ.get("INVOICE_EMAIL", self.gmail_address)
+        self.invoice_address = os.environ.get("INVOICE_ADDRESS", "")
+        self.invoice_website = os.environ.get("INVOICE_WEBSITE", "")
+        self.invoice_payment_method = os.environ.get("INVOICE_PAYMENT_METHOD", "Bank transfer")
+        self.invoice_currency_symbol = os.environ.get("INVOICE_CURRENCY_SYMBOL", "$")
+
     def google_credentials_info(self) -> dict:
         raw = self.google_service_account_json.strip()
         if not raw.startswith("{"):
