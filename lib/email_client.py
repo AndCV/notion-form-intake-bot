@@ -20,50 +20,140 @@ from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
+from .config import Config
 from .schemas import AdvisorySubmission, Submission
 
+# Same palette as the invoice letterhead (see templates/invoice.html), so the
+# email signature matches the PDF branding.
+_NAVY = "#0F226F"
+_TEAL = "#3CCACF"
+_GRAY = "#6A6F86"
 
-def _advisory_email(submission: AdvisorySubmission, business_name: str) -> tuple[str, str]:
+
+def _wrap_email_html(content: str) -> str:
+    """Wraps the email body in an explicit white card.
+
+    Gmail's dark theme repaints any color it judges "close to black" (like
+    our navy) to a lighter shade for contrast, and light backgrounds
+    (#EEF0F6 pills) to a darker one -- silently breaking the brand palette.
+    An explicit bgcolor (attribute, not just CSS) on every colored cell,
+    plus the color-scheme meta tags, tells Gmail to leave it alone.
+    """
+    return f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="color-scheme" content="light">
+<meta name="supported-color-schemes" content="light">
+</head>
+<body style="margin:0;padding:0;background-color:#ffffff;" bgcolor="#ffffff">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+       style="background-color:#ffffff;" bgcolor="#ffffff">
+    <tr>
+        <td align="center" style="padding:24px 12px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+                   style="max-width:560px;background-color:#ffffff;" bgcolor="#ffffff">
+                <tr>
+                    <td style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#1a1a1a;">
+                        {content}
+                    </td>
+                </tr>
+            </table>
+        </td>
+    </tr>
+</table>
+</body>
+</html>"""
+
+
+def _signature_html(config: Config) -> str:
+    tagline_row = (
+        f'<p style="margin:3px 0 0 0;font-size:12px;color:{_GRAY};background-color:#ffffff;">'
+        f"{config.invoice_tagline}</p>"
+        if config.invoice_tagline
+        else ""
+    )
+    website_display = config.invoice_website.removeprefix("https://").removeprefix("http://")
+    badge_links = (
+        (config.invoice_phone, f"tel:{config.invoice_phone}"),
+        (config.invoice_email, f"mailto:{config.invoice_email}"),
+        (website_display, config.invoice_website),
+    )
+    # Gmail's dark theme repaints any "dark text on white" or "light bg" pair
+    # it judges unstyled -- even past an explicit bgcolor on a parent <td>.
+    # The mitigation that actually holds is pairing color: with a
+    # background-color: in the SAME style attribute as the text itself, on
+    # every element down to the leaf (span/a), not just the containing cell.
+    badges = "".join(
+        f"""
+        <td style="background-color:#EEF0F6;border-radius:14px;padding:5px 12px;
+                   font-size:11px;white-space:nowrap;" bgcolor="#EEF0F6">
+            <a href="{href}" style="color:#1a1a1a;background-color:#EEF0F6;text-decoration:none;">
+                <span style="color:{_TEAL};background-color:#EEF0F6;">&#9679;</span> {display}
+            </a>
+        </td>
+        <td style="width:8px;"></td>
+        """
+        for display, href in badge_links
+        if display
+    )
+    return f"""
+        <table role="presentation" cellpadding="0" cellspacing="0"
+               style="margin-top:24px;border-collapse:collapse;font-family:Arial,Helvetica,sans-serif;background-color:#ffffff;" bgcolor="#ffffff">
+            <tr>
+                <td style="background-color:{_NAVY};width:5px;" bgcolor="{_NAVY}"></td>
+                <td style="background-color:{_TEAL};width:3px;" bgcolor="{_TEAL}"></td>
+                <td style="padding:8px 0 10px 16px;background-color:#ffffff;" bgcolor="#ffffff">
+                    <p style="margin:0;font-size:16px;font-weight:bold;color:{_NAVY};background-color:#ffffff;">{config.invoice_issuer_name}</p>
+                    {tagline_row}
+                    <table role="presentation" cellpadding="0" cellspacing="0" style="margin-top:8px;border-collapse:separate;">
+                        <tr>{badges}</tr>
+                    </table>
+                </td>
+            </tr>
+        </table>
+    """
+
+
+def _advisory_email(submission: AdvisorySubmission, config: Config) -> tuple[str, str]:
     date_text = submission.deadline.strftime("%d/%m/%Y")
-    subject = f"Confirmación de tu solicitud de asesoría — {business_name}"
-    html = f"""
+    subject = f"Confirmación de tu solicitud de asesoría — {config.business_name}"
+    html = _wrap_email_html(f"""
         <p>Hola {submission.name},</p>
         <p>Recibimos tu solicitud de asesoría. Tu fecha límite registrada es el
         <strong>{date_text}</strong>.</p>
         <p>Te vamos a contactar antes de esa fecha para coordinar los detalles.
         Adjuntamos un evento de referencia para que lo agregues a tu
         calendario.</p>
-        <p>Gracias por confiar en {business_name}.</p>
-        <p>— Andrés Cubillo</p>
-    """
+        <p>Gracias por confiar en {config.business_name}.</p>
+        {_signature_html(config)}
+    """)
     return subject, html
 
 
-def _class_email(submission: Submission, business_name: str) -> tuple[str, str]:
+def _class_email(submission: Submission, config: Config) -> tuple[str, str]:
     date_text = submission.scheduled_at.strftime("%d/%m/%Y a las %H:%M")
-    subject = f"Confirmación de tu clase — {business_name}"
-    html = f"""
+    subject = f"Confirmación de tu clase — {config.business_name}"
+    html = _wrap_email_html(f"""
         <p>Hola {submission.name},</p>
         <p>Tu clase quedó agendada para el <strong>{date_text}</strong>.</p>
         <p>Adjuntamos el evento para que lo agregues a tu calendario. Cualquier
         cambio de horario avísanos con anticipación.</p>
         <p>Nos vemos pronto.</p>
-        <p>— Andrés Cubillo</p>
-    """
+        {_signature_html(config)}
+    """)
     return subject, html
 
 
-def _build_message(
-    gmail_address: str, submission: Submission, ics_bytes: bytes, business_name: str
-) -> MIMEMultipart:
+def _build_message(submission: Submission, ics_bytes: bytes, config: Config) -> MIMEMultipart:
     if isinstance(submission, AdvisorySubmission):
-        subject, html = _advisory_email(submission, business_name)
+        subject, html = _advisory_email(submission, config)
     else:
-        subject, html = _class_email(submission, business_name)
+        subject, html = _class_email(submission, config)
 
     message = MIMEMultipart("mixed")
     message["Subject"] = subject
-    message["From"] = gmail_address
+    message["From"] = config.gmail_address
     message["To"] = submission.email
     message.attach(MIMEText(html, "html"))
 
@@ -76,34 +166,30 @@ def _build_message(
     return message
 
 
-def send_confirmation_email(
-    gmail_address: str,
-    gmail_app_password: str,
-    submission: Submission,
-    ics_bytes: bytes,
-    business_name: str,
-) -> None:
-    message = _build_message(gmail_address, submission, ics_bytes, business_name)
+def send_confirmation_email(config: Config, submission: Submission, ics_bytes: bytes) -> None:
+    message = _build_message(submission, ics_bytes, config)
 
     with smtplib.SMTP("smtp.gmail.com", 587) as server:
         server.starttls()
-        server.login(gmail_address, gmail_app_password)
-        server.sendmail(gmail_address, [submission.email], message.as_string())
+        server.login(config.gmail_address, config.gmail_app_password)
+        server.sendmail(config.gmail_address, [submission.email], message.as_string())
 
 
 def send_invoice_email(
-    gmail_address: str,
-    gmail_app_password: str,
-    submission: Submission,
-    pdf_bytes: bytes,
-    invoice_number: str,
+    config: Config, submission: Submission, pdf_bytes: bytes, invoice_number: str
 ) -> None:
     message = MIMEMultipart("mixed")
     message["Subject"] = f"Factura {invoice_number}"
-    message["From"] = gmail_address
+    message["From"] = config.gmail_address
     message["To"] = submission.email
     message.attach(
-        MIMEText(f"<p>Hola {submission.name},</p><p>Adjuntamos tu factura.</p>", "html")
+        MIMEText(
+            _wrap_email_html(
+                f"<p>Hola {submission.name},</p><p>Adjuntamos tu factura.</p>"
+                f"{_signature_html(config)}"
+            ),
+            "html",
+        )
     )
 
     attachment = MIMEBase("application", "pdf")
@@ -116,5 +202,5 @@ def send_invoice_email(
 
     with smtplib.SMTP("smtp.gmail.com", 587) as server:
         server.starttls()
-        server.login(gmail_address, gmail_app_password)
-        server.sendmail(gmail_address, [submission.email], message.as_string())
+        server.login(config.gmail_address, config.gmail_app_password)
+        server.sendmail(config.gmail_address, [submission.email], message.as_string())

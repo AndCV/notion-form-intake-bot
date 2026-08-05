@@ -1,11 +1,27 @@
 from datetime import date, datetime
 from email import message_from_string
 from email.header import decode_header
+from types import SimpleNamespace
 
 from lib.email_client import send_confirmation_email
 from lib.schemas import AdvisorySubmission, ClassSubmission
 
 BUSINESS_NAME = "Test Co"
+
+
+def _config(**overrides):
+    base = dict(
+        gmail_address="andres@gmail.com",
+        gmail_app_password="app-password",
+        business_name=BUSINESS_NAME,
+        invoice_issuer_name="Andrés Cubillo",
+        invoice_tagline="Test Tagline",
+        invoice_phone="555-1234",
+        invoice_email="andres@gmail.com",
+        invoice_website="example.com",
+    )
+    base.update(overrides)
+    return SimpleNamespace(**base)
 
 
 def _advisory_submission():
@@ -51,9 +67,7 @@ def _send_and_parse(mocker, submission):
     fake_smtp.__exit__ = mocker.Mock(return_value=False)
     mocker.patch("lib.email_client.smtplib.SMTP", return_value=fake_smtp)
 
-    send_confirmation_email(
-        "andres@gmail.com", "app-password", submission, b"ICS", BUSINESS_NAME
-    )
+    send_confirmation_email(_config(), submission, b"ICS")
 
     fake_smtp.starttls.assert_called_once()
     fake_smtp.login.assert_called_once_with("andres@gmail.com", "app-password")

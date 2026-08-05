@@ -48,13 +48,7 @@ def process_page(config: Config, notion: NotionRepository, page: dict) -> None:
 
     if not submission.email_sent:
         ics_bytes = build_ics(submission, config.timezone, config.class_duration_minutes)
-        send_confirmation_email(
-            config.gmail_address,
-            config.gmail_app_password,
-            submission,
-            ics_bytes,
-            config.business_name,
-        )
+        send_confirmation_email(config, submission, ics_bytes)
         logger.info("Confirmation email sent (page_id=%s)", page_id)
 
     notion.mark_confirmed(page_id)
@@ -63,9 +57,7 @@ def process_page(config: Config, notion: NotionRepository, page: dict) -> None:
     if submission.price is not None and not submission.invoice_sent:
         invoice_number = format_invoice_number(notion.get_last_invoice_number() + 1)
         pdf_bytes = build_invoice_pdf(config, submission, invoice_number, date.today())
-        send_invoice_email(
-            config.gmail_address, config.gmail_app_password, submission, pdf_bytes, invoice_number
-        )
+        send_invoice_email(config, submission, pdf_bytes, invoice_number)
         notion.mark_invoiced(page_id, invoice_number)
         logger.info(
             "Invoice %s generated and sent (page_id=%s)", invoice_number, page_id
