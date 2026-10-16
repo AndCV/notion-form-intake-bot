@@ -16,12 +16,22 @@ concurrency:
   group: poll-notion
   cancel-in-progress: false
 
+permissions:
+  contents: read
+  actions: write
+
 jobs:
   poll:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+
+      # GitHub disables scheduled workflows after 60 days without repo
+      # activity. Re-enabling the workflow on every run resets that timer.
+      - run: gh api -X PUT repos/${{ github.repository }}/actions/workflows/poll.yml/enable
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       - uses: actions/setup-python@v5
         with:
