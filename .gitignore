@@ -8,3 +8,12 @@ venv/
 .venv/
 sample_invoice.pdf
 sample_invoice.png
+
+# The earnings workbook and its exports hold real client names and revenue.
+# This repo is public: they must never be committed (see issue #1).
+*.csv
+*.xlsx
+*.xls
+
+.DS_Store
+.gstack/
