@@ -3,7 +3,7 @@ from email import message_from_string
 from email.header import decode_header
 from types import SimpleNamespace
 
-from lib.email_client import send_confirmation_email
+from lib.email_client import send_confirmation_email, send_invoice_email
 from lib.schemas import AdvisorySubmission, ClassSubmission
 
 BUSINESS_NAME = "Test Co"
@@ -11,13 +11,13 @@ BUSINESS_NAME = "Test Co"
 
 def _config(**overrides):
     base = dict(
-        gmail_address="andres@gmail.com",
-        gmail_app_password="app-password",
+        zoho_address="andres@zohomail.com",
+        zoho_app_password="app-password",
         business_name=BUSINESS_NAME,
         invoice_issuer_name="Andrés Cubillo",
         invoice_tagline="Test Tagline",
         invoice_phone="555-1234",
-        invoice_email="andres@gmail.com",
+        invoice_email="andres@zohomail.com",
         invoice_website="example.com",
     )
     base.update(overrides)
@@ -61,20 +61,31 @@ def _decoded_html_body(message) -> str:
     raise AssertionError("No text/html part found in the message")
 
 
-def _send_and_parse(mocker, submission):
+def _fake_smtp_ssl(mocker):
     fake_smtp = mocker.Mock()
     fake_smtp.__enter__ = mocker.Mock(return_value=fake_smtp)
     fake_smtp.__exit__ = mocker.Mock(return_value=False)
-    mocker.patch("lib.email_client.smtplib.SMTP", return_value=fake_smtp)
+    smtp_ssl = mocker.patch("lib.email_client.smtplib.SMTP_SSL", return_value=fake_smtp)
+    return smtp_ssl, fake_smtp
+
+
+def _assert_sent_via_zoho(smtp_ssl, fake_smtp, recipient):
+    smtp_ssl.assert_called_once_with("smtp.zoho.com", 465)
+    fake_smtp.login.assert_called_once_with("andres@zohomail.com", "app-password")
+    from_addr, to_addrs, message_str = fake_smtp.sendmail.call_args[0]
+    assert from_addr == "andres@zohomail.com"
+    assert to_addrs == [recipient]
+    message = message_from_string(message_str)
+    assert message["From"] == "andres@zohomail.com"
+    return message
+
+
+def _send_and_parse(mocker, submission):
+    smtp_ssl, fake_smtp = _fake_smtp_ssl(mocker)
 
     send_confirmation_email(_config(), submission, b"ICS")
 
-    fake_smtp.starttls.assert_called_once()
-    fake_smtp.login.assert_called_once_with("andres@gmail.com", "app-password")
-    from_addr, to_addrs, message_str = fake_smtp.sendmail.call_args[0]
-    assert from_addr == "andres@gmail.com"
-    assert to_addrs == [submission.email]
-    return message_from_string(message_str)
+    return _assert_sent_via_zoho(smtp_ssl, fake_smtp, submission.email)
 
 
 def test_advisory_email_mentions_deadline_business_name_and_signature(mocker):
@@ -102,3 +113,16 @@ def test_ics_attachment_is_included(mocker):
     attachments = [part for part in message.walk() if part.get_filename() == "evento.ics"]
     assert len(attachments) == 1
     assert attachments[0].get_payload(decode=True) == b"ICS"
+
+
+def test_invoice_email_is_sent_via_zoho_with_pdf_attached(mocker):
+    smtp_ssl, fake_smtp = _fake_smtp_ssl(mocker)
+    submission = _class_submission()
+
+    send_invoice_email(_config(), submission, b"%PDF", "0000042")
+
+    message = _assert_sent_via_zoho(smtp_ssl, fake_smtp, submission.email)
+    assert _decode_subject(message) == "Factura 0000042"
+    attachments = [part for part in message.walk() if part.get_filename() == "factura-0000042.pdf"]
+    assert len(attachments) == 1
+    assert attachments[0].get_payload(decode=True) == b"%PDF"

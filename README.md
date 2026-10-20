@@ -38,7 +38,7 @@ lib/schemas.py                     # parses a Notion row (page) into a typed obj
 lib/notion_client.py               # queries pending rows + marks them as processed
 lib/calendar_client.py             # creates events in Google Calendar
 lib/ics.py                         # builds the .ics attachment
-lib/email_client.py                # sends email via Gmail SMTP (copy is easy to edit)
+lib/email_client.py                # sends email via Zoho Mail SMTP (copy is easy to edit)
 lib/invoicing.py                   # renders templates/invoice.html to a PDF
 templates/invoice.html             # invoice layout (HTML/CSS + inline SVG)
 .github/workflows/poll.yml         # cron every 15 minutes
@@ -74,15 +74,15 @@ tests/                             # pytest, mocks every external API
   run continues with the rest. That row will keep showing up on every run
   until the fields are filled in or the row is deleted — expected behavior,
   not a bug.
-- **Gmail instead of a transactional email provider**: sending through a
+- **Zoho Mail instead of a transactional email provider**: sending through a
   provider like Resend/SendGrid usually requires a verified custom domain to
   send to arbitrary recipients — fine for many setups, but not always
-  available. Gmail (via SMTP + an App Password) sends to any recipient
-  without a domain, for free. Trade-offs: the sender looks like a personal
-  Gmail address rather than a branded one, and a personal Gmail account caps
-  at roughly 500 sends/day (far above what a small intake form needs). If
-  you later get a verified domain, swap providers by editing only
-  `lib/email_client.py` — nothing else depends on it.
+  available. A personal Zoho Mail account (`@zohomail.com`, via SMTP over
+  SSL + an App Password) sends to any recipient without a domain, for free.
+  Trade-offs: the sender looks like a personal address rather than a branded
+  one, and free accounts have a daily sending cap (far above what a small
+  intake form needs). If you later get a verified domain, swap providers by
+  editing only `lib/email_client.py` — nothing else depends on it.
 - **Invoice numbers come from Notion itself, not a separate counter**: the
   next number is "the highest `Invoice Number` already in the database,
   plus one", queried fresh every time a row is actually invoiced (not at
@@ -187,17 +187,17 @@ That id is `NOTION_DATA_SOURCE_ID`.
 6. `GOOGLE_CALENDAR_ID` is that calendar's id — for your primary calendar
    it's just your email address.
 
-### Gmail (sending email)
+### Zoho Mail (sending email)
 
-1. On the Gmail account that will send the emails, enable 2-Step
-   Verification if you haven't:
-   [myaccount.google.com/security](https://myaccount.google.com/security).
-2. With that on, go to
-   [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords)
-   → create a new App Password (any name works) → Google shows you a
-   16-character code once.
-3. That code goes in `GMAIL_APP_PASSWORD`. `GMAIL_ADDRESS` is the same Gmail
-   address.
+1. On the Zoho Mail account that will send the emails, open your Zoho
+   account's security settings and create an App Password (any name works).
+   Zoho shows the code once.
+2. That code goes in `ZOHO_APP_PASSWORD`. `ZOHO_ADDRESS` is the full Zoho
+   address (e.g. `you@zohomail.com`).
+3. The service connects to `smtp.zoho.com:465` over SSL — the server for
+   personal `@zohomail.com` and free-plan accounts. Paid organization
+   accounts on a custom domain use `smtppro.zoho.com` instead: change
+   `_SMTP_HOST` in `lib/email_client.py`.
 4. No sandbox mode, no recipient restriction — you can send to anyone from
    the first send.
 
@@ -209,7 +209,7 @@ to change the wording.
 
 Once a row has a `Precio` set, the next run generates a one-line-item
 invoice PDF (name, detail, price, issue date, a 7-digit consecutive number)
-and emails it via Gmail, then marks the row `Factura Enviada`.
+and emails it via Zoho Mail, then marks the row `Factura Enviada`.
 
 The letterhead (issuer name, tagline, contact info, payment method,
 currency symbol) comes entirely from the `INVOICE_*` environment variables
@@ -225,7 +225,7 @@ python scripts/generate_sample_invoice.py   # writes sample_invoice.pdf, no exte
 
 Open `sample_invoice.pdf` after every change to check it visually — it uses
 the same `INVOICE_*` variables from your `.env`, with made-up client/price
-data, and never touches Notion, Calendar or Gmail.
+data, and never touches Notion, Calendar or Zoho Mail.
 
 ### WeasyPrint system dependencies (local setup)
 
@@ -265,14 +265,14 @@ export DYLD_LIBRARY_PATH="$(brew --prefix)/lib:$DYLD_LIBRARY_PATH"
 
 pytest              # runs the full suite (mocks every external API)
 
-python scripts/poll_notion.py   # runs one real cycle against Notion/Calendar/Gmail
+python scripts/poll_notion.py   # runs one real cycle against Notion/Calendar/Zoho Mail
 ```
 
 ## Scheduling the run (GitHub Actions)
 
 1. In the GitHub repo: `Settings` → `Secrets and variables` → `Actions` →
-   add as secrets: `NOTION_TOKEN`, `NOTION_DATA_SOURCE_ID`, `GMAIL_ADDRESS`,
-   `GMAIL_APP_PASSWORD`, `GOOGLE_SERVICE_ACCOUNT_JSON`,
+   add as secrets: `NOTION_TOKEN`, `NOTION_DATA_SOURCE_ID`, `ZOHO_ADDRESS`,
+   `ZOHO_APP_PASSWORD`, `GOOGLE_SERVICE_ACCOUNT_JSON`,
    `GOOGLE_CALENDAR_ID`, `BUSINESS_NAME`, `TIMEZONE`, `INVOICE_ISSUER_NAME`,
    `INVOICE_TAGLINE`, `INVOICE_PHONE`, `INVOICE_EMAIL`, `INVOICE_ADDRESS`,
    `INVOICE_WEBSITE`, `INVOICE_PAYMENT_METHOD`, `INVOICE_CURRENCY_SYMBOL`.

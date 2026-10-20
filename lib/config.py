@@ -29,11 +29,11 @@ class Config:
         # container itself (see README).
         self.notion_data_source_id = _require("NOTION_DATA_SOURCE_ID")
 
-        # Email is sent via Gmail (SMTP + App Password) instead of a
+        # Email is sent via Zoho Mail (SMTP + App Password) instead of a
         # transactional provider: there's no verified custom domain, and
-        # Gmail doesn't require one to send to arbitrary recipients.
-        self.gmail_address = _require("GMAIL_ADDRESS")
-        self.gmail_app_password = _require("GMAIL_APP_PASSWORD")
+        # Zoho doesn't require one to send to arbitrary recipients.
+        self.zoho_address = _require("ZOHO_ADDRESS")
+        self.zoho_app_password = _require("ZOHO_APP_PASSWORD")
 
         self.google_service_account_json = _require("GOOGLE_SERVICE_ACCOUNT_JSON")
         self.google_calendar_id = _require("GOOGLE_CALENDAR_ID")
@@ -54,7 +54,7 @@ class Config:
         self.invoice_issuer_name = os.environ.get("INVOICE_ISSUER_NAME", "Your Name")
         self.invoice_tagline = os.environ.get("INVOICE_TAGLINE", "")
         self.invoice_phone = os.environ.get("INVOICE_PHONE", "")
-        self.invoice_email = os.environ.get("INVOICE_EMAIL", self.gmail_address)
+        self.invoice_email = os.environ.get("INVOICE_EMAIL", self.zoho_address)
         self.invoice_address = os.environ.get("INVOICE_ADDRESS", "")
         self.invoice_website = os.environ.get("INVOICE_WEBSITE", "")
         self.invoice_payment_method = os.environ.get("INVOICE_PAYMENT_METHOD", "Bank transfer")

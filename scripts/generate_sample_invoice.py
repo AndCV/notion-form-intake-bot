@@ -1,5 +1,5 @@
 """Generates one sample invoice PDF locally, with made-up data, so the
-design can be reviewed quickly without touching Notion, Calendar or Gmail.
+design can be reviewed quickly without touching Notion, Calendar or Zoho Mail.
 
 Only reads the INVOICE_* environment variables (the ones that affect the
 letterhead) -- none of the other required config (NOTION_TOKEN, service

@@ -5,8 +5,8 @@ def _config(**overrides):
     base = dict(
         notion_token="notion-token",
         notion_data_source_id="ds-1",
-        gmail_address="andres@gmail.com",
-        gmail_app_password="app-password",
+        zoho_address="andres@zohomail.com",
+        zoho_app_password="app-password",
         google_service_account_json="{}",
         google_calendar_id="cal-id",
         business_name="Test Co",

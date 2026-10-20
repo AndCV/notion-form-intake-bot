@@ -1,10 +1,10 @@
-"""Sends the confirmation email via Gmail (SMTP + App Password), with the
-.ics attached.
+"""Sends the confirmation email via Zoho Mail (SMTP over SSL + App
+Password), with the .ics attached.
 
-Sent from a personal Gmail account instead of a transactional provider
-(e.g. Resend) because there's no verified custom domain: Gmail doesn't
+Sent from a personal Zoho Mail account instead of a transactional provider
+(e.g. Resend) because there's no verified custom domain: Zoho doesn't
 require one to send to any recipient, only an App Password for the sending
-account (see README, "Gmail (sending email)" section).
+account (see README, "Zoho Mail (sending email)" section).
 
 The email copy itself is isolated in _advisory_email and _class_email below
 so it's easy to edit without touching the rest of the send logic. The copy
@@ -28,6 +28,11 @@ from .schemas import AdvisorySubmission, Submission
 _NAVY = "#0F226F"
 _TEAL = "#3CCACF"
 _GRAY = "#6A6F86"
+
+# Personal (@zohomail.com) and free-plan accounts use smtp.zoho.com; paid
+# organization accounts on a custom domain use smtppro.zoho.com instead.
+_SMTP_HOST = "smtp.zoho.com"
+_SMTP_PORT = 465
 
 
 def _wrap_email_html(content: str) -> str:
@@ -153,7 +158,7 @@ def _build_message(submission: Submission, ics_bytes: bytes, config: Config) -> 
 
     message = MIMEMultipart("mixed")
     message["Subject"] = subject
-    message["From"] = config.gmail_address
+    message["From"] = config.zoho_address
     message["To"] = submission.email
     message.attach(MIMEText(html, "html"))
 
@@ -166,13 +171,14 @@ def _build_message(submission: Submission, ics_bytes: bytes, config: Config) -> 
     return message
 
 
-def send_confirmation_email(config: Config, submission: Submission, ics_bytes: bytes) -> None:
-    message = _build_message(submission, ics_bytes, config)
+def _send(config: Config, recipients: list[str], message: MIMEMultipart) -> None:
+    with smtplib.SMTP_SSL(_SMTP_HOST, _SMTP_PORT) as server:
+        server.login(config.zoho_address, config.zoho_app_password)
+        server.sendmail(config.zoho_address, recipients, message.as_string())
 
-    with smtplib.SMTP("smtp.gmail.com", 587) as server:
-        server.starttls()
-        server.login(config.gmail_address, config.gmail_app_password)
-        server.sendmail(config.gmail_address, [submission.email], message.as_string())
+
+def send_confirmation_email(config: Config, submission: Submission, ics_bytes: bytes) -> None:
+    _send(config, [submission.email], _build_message(submission, ics_bytes, config))
 
 
 def send_invoice_email(
@@ -180,7 +186,7 @@ def send_invoice_email(
 ) -> None:
     message = MIMEMultipart("mixed")
     message["Subject"] = f"Factura {invoice_number}"
-    message["From"] = config.gmail_address
+    message["From"] = config.zoho_address
     message["To"] = submission.email
     message.attach(
         MIMEText(
@@ -200,7 +206,4 @@ def send_invoice_email(
     )
     message.attach(attachment)
 
-    with smtplib.SMTP("smtp.gmail.com", 587) as server:
-        server.starttls()
-        server.login(config.gmail_address, config.gmail_app_password)
-        server.sendmail(config.gmail_address, [submission.email], message.as_string())
+    _send(config, [submission.email], message)
