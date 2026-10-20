@@ -23,5 +23,5 @@ COPY db ./db
 COPY scripts ./scripts
 
 # The host sets $PORT. --proxy-headers so request.client is the visitor,
-# not Google's front end.
+# not the host's load balancer.
 CMD exec uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-8080}" --proxy-headers --forwarded-allow-ips="*"
