@@ -590,3 +590,40 @@ def test_editing_a_collaborator_keeps_whom_a_sent_receipt_was_issued_to(client):
     [row] = _rows("SELECT receipt_to_name, receipt_to_email FROM services WHERE id = %s", (sid,))
     assert (row["receipt_to_name"], row["receipt_to_email"]) == ("Colaborador Uno", "uno@example.com")
     assert "Recibo a Colaborador Uno" in client.get(f"/servicios/{sid}").text
+
+
+# --- summary and export (part 5) -------------------------------------------------------
+
+
+@pytest.mark.parametrize("path", ["/resumen", "/exportar.csv"])
+def test_summary_and_export_require_login(client, path):
+    """protects: earnings data is never public;
+    fails_when: either page answers without a session;
+    no_claim: none beyond protects."""
+    response = client.get(path, follow_redirects=False)
+
+    assert response.status_code == 302 and response.headers["location"] == "/login"
+
+
+def test_summary_and_export_reflect_services_and_skip_deleted(client):
+    """protects: criteria 11 and 13 -- the summary and CSV come from the database and
+    leave deleted services out;
+    fails_when: a deleted service is counted or exported;
+    no_claim: the real workbook comparison lives in tests/test_ledger.py."""
+    _login(client)
+    _create(client, price="15000")
+    _create(client, client_name="Cliente B", price="25000", hire="1", collaborator_id="1",
+            collaborator_pay="5000")  # fmt: skip
+    gone = _service_id(_create(client, client_name="Cliente Borrado", price="99000"))
+    client.post(f"/servicios/{gone}/borrar", data={"csrf": _csrf(client, f"/servicios/{gone}/borrar")})
+
+    html = client.get("/resumen?anio=2026").text
+    assert "₡40.000" in html and "₡35.000" in html and "Octubre" in html
+
+    response = client.get("/exportar.csv?anio=2026")
+    assert response.status_code == 200
+    assert response.headers["content-disposition"] == 'attachment; filename="Ganancias_2026_completo.csv"'
+    text = response.content.decode("utf-8")
+    assert "Cliente Borrado" not in text
+    sheets = {line.split(",", 1)[0] for line in text.lstrip("\ufeff").splitlines()}
+    assert "II Cuatrimestre" not in sheets and "III Cuatrimestre,,,Total,40000,35000" in text

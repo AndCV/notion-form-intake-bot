@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Resumen {{ year }}{% endblock %}
+{% block content %}
+<div class="nav">
+  <a class="btn secondary small" href="/resumen?anio={{ year - 1 }}">&larr;</a>
+  <h1 style="margin:0">Resumen {{ year }}</h1>
+  <a class="btn secondary small" href="/resumen?anio={{ year + 1 }}">&rarr;</a>
+</div>
+
+<div class="stats">
+  <div class="stat"><b>{{ s.total.count }}</b><span>Servicios</span></div>
+  <div class="stat"><b>{{ s.total.price | money }}</b><span>Facturado</span></div>
+  <div class="stat"><b>{{ s.total.profit | money }}</b><span>Ganancia · {{ s.total.margin | pct }}</span></div>
+</div>
+
+<a class="btn secondary block" href="/exportar.csv?anio={{ year }}" style="margin:0 0 14px">Descargar CSV {{ year }}</a>
+
+{% if s.months %}
+<h2>Por mes</h2>
+<div class="card table-wrap" style="padding:0">
+  <table class="data">
+    <thead><tr><th>Mes</th><th>Serv.</th><th>Clases</th><th>Facturado</th><th>Colab.</th><th>Ganancia</th><th>Margen</th><th>Var.</th></tr></thead>
+    <tbody>
+      {% for p in s.months %}
+      <tr>
+        <td><a href="/servicios?anio={{ year }}&mes={{ p.number }}">{{ p.label }}</a></td>
+        <td>{{ p.count }}</td><td>{{ p.classes }}</td>
+        <td>{{ p.price | money }}</td><td>{{ p.cost | money }}</td><td><strong>{{ p.profit | money }}</strong></td>
+        <td>{{ p.margin | pct }}</td><td>{{ growth[loop.index0] | pct }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+    <tfoot>
+      <tr><td>Total</td><td>{{ s.total.count }}</td><td>{{ s.total.classes }}</td>
+        <td>{{ s.total.price | money }}</td><td>{{ s.total.cost | money }}</td><td>{{ s.total.profit | money }}</td>
+        <td>{{ s.total.margin | pct }}</td><td></td></tr>
+    </tfoot>
+  </table>
+</div>
+
+<h2>Por cuatrimestre</h2>
+<div class="card table-wrap" style="padding:0">
+  <table class="data">
+    <thead><tr><th>Periodo</th><th>Meses</th><th>Serv.</th><th>Facturado</th><th>Ganancia</th><th>Margen</th><th>% gan.</th></tr></thead>
+    <tbody>
+      {% for c in s.cuatrimestres %}
+      <tr><td>{{ c.label }}</td><td>{{ c.months }}</td><td>{{ c.count }}</td><td>{{ c.price | money }}</td>
+        <td>{{ c.profit | money }}</td><td>{{ c.margin | pct }}</td>
+        <td>{{ (c.profit / s.total.profit) | float | pct if s.total.profit else "—" }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<h2>Clientes recurrentes</h2>
+<div class="card table-wrap" style="padding:0">
+  <table class="data">
+    <thead><tr><th>Cliente</th><th>Serv.</th><th>Facturado</th><th>Ganancia</th><th>% gan.</th></tr></thead>
+    <tbody>
+      {% for c in s.clients[:20] %}
+      <tr><td>{{ c.name }}</td><td>{{ c.count }}</td><td>{{ c.price | money }}</td><td>{{ c.profit | money }}</td>
+        <td>{{ (c.profit / s.total.profit) | float | pct if s.total.profit else "—" }}</td></tr>
+      {% else %}
+      <tr><td colspan="5" class="muted">Ningún cliente con 2 o más servicios.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+<p class="muted">Los clientes se agrupan por nombre sin importar mayúsculas, tildes ni espacios. Variantes con otra ortografía (por ejemplo, con una letra de más) cuentan aparte.</p>
+{% else %}
+<p class="muted">No hay servicios registrados en {{ year }}.</p>
+{% endif %}
+{% endblock %}

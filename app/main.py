@@ -30,7 +30,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from lib import db
+from lib import db, ledger
 from lib.auth import verify_password
 from lib.config import Config, ConfigError, get_config
 from lib.pipeline import Senders, ServiceBusy, default_senders, process_service
@@ -95,8 +95,12 @@ def create_app(config: Config | None = None, senders: Senders | None = None) -> 
             return value.astimezone(tz).strftime("%d/%m/%Y %H:%M")
         return value.strftime("%d/%m/%Y")
 
+    def pct(value: float | None) -> str:
+        return "—" if value is None else f"{value * 100:.1f}%".replace(".", ",")
+
     templates.env.filters["money"] = money
     templates.env.filters["dmy"] = dmy
+    templates.env.filters["pct"] = pct
 
     def today() -> date:
         return datetime.now(tz).date()
@@ -415,6 +419,43 @@ def create_app(config: Config | None = None, senders: Senders | None = None) -> 
         with conn() as c:
             db.soft_delete_service(c, service_id)
         return RedirectResponse("/", status_code=303)
+
+    # --- earnings summary and export -------------------------------------------
+
+    def year_rows(c: psycopg.Connection, year: int) -> list[dict[str, Any]]:
+        start, end = ledger.year_range(year)
+        return db.list_services(c, start, end)
+
+    def valid_year(anio: int | None) -> int | None:
+        year = anio or today().year
+        return year if 2000 <= year <= 2100 else None
+
+    @app.get("/resumen")
+    def summary(request: Request, anio: int | None = None):
+        require_login(request)
+        year = valid_year(anio)
+        if year is None:
+            return HTMLResponse("Año inválido.", status_code=400)
+        with conn() as c:
+            s = ledger.summarize(year_rows(c, year), year)
+        return render(request, "summary.html", s=s, growth=s.month_growth(), year=year)
+
+    @app.get("/exportar.csv")
+    def export(request: Request, anio: int | None = None):
+        require_login(request)
+        year = valid_year(anio)
+        if year is None:
+            return HTMLResponse("Año inválido.", status_code=400)
+        with conn() as c:
+            body = ledger.export_csv(year_rows(c, year), year)
+        return Response(
+            body.encode("utf-8"),
+            media_type="text/csv; charset=utf-8",
+            headers={
+                "Content-Disposition": f'attachment; filename="Ganancias_{year}_completo.csv"',
+                "Cache-Control": "no-store",
+            },
+        )
 
     # --- collaborators ---------------------------------------------------------
 
