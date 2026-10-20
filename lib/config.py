@@ -35,7 +35,25 @@ class Config:
         # transactional provider: there's no verified custom domain, and
         # Zoho doesn't require one to send to arbitrary recipients.
         self.zoho_address = _require("ZOHO_ADDRESS")
-        self.zoho_app_password = _require("ZOHO_APP_PASSWORD")
+        # Two ways to send (lib/email_client.py picks one): the Zoho Mail
+        # HTTPS API when the OAuth settings below are present -- required on
+        # hosts that block SMTP, like Render's free tier -- else SMTP with
+        # the App Password.
+        self.zoho_app_password = os.environ.get("ZOHO_APP_PASSWORD", "")
+        self.zoho_client_id = os.environ.get("ZOHO_CLIENT_ID", "")
+        self.zoho_client_secret = os.environ.get("ZOHO_CLIENT_SECRET", "")
+        self.zoho_refresh_token = os.environ.get("ZOHO_REFRESH_TOKEN", "")
+        self.zoho_account_id = os.environ.get("ZOHO_ACCOUNT_ID", "")
+        self.zoho_accounts_url = os.environ.get("ZOHO_ACCOUNTS_URL", "")
+        self.zoho_mail_api_url = os.environ.get("ZOHO_MAIL_API_URL", "")
+        api = (self.zoho_client_id, self.zoho_client_secret, self.zoho_refresh_token, self.zoho_account_id)
+        if any(api) and not all(api):
+            raise ConfigError(
+                "Zoho API: set all of ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET, "
+                "ZOHO_REFRESH_TOKEN and ZOHO_ACCOUNT_ID, or none of them"
+            )
+        if not any(api) and not self.zoho_app_password:
+            raise ConfigError("Missing environment variable ZOHO_APP_PASSWORD (or the Zoho API settings)")
 
         self.google_service_account_json = _require("GOOGLE_SERVICE_ACCOUNT_JSON")
         self.google_calendar_id = _require("GOOGLE_CALENDAR_ID")

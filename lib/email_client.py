@@ -15,12 +15,14 @@ clients, not code.
 from __future__ import annotations
 
 import smtplib
+from dataclasses import dataclass, field
 from email import encoders
 from html import escape
 from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
+from . import zoho_api
 from .config import Config
 from .schemas import AdvisorySubmission, Submission, recipients
 
@@ -151,70 +153,80 @@ def _class_email(submission: Submission, config: Config) -> tuple[str, str]:
     return subject, html
 
 
-def _build_message(submission: Submission, ics_bytes: bytes, config: Config) -> MIMEMultipart:
-    if isinstance(submission, AdvisorySubmission):
-        subject, html = _advisory_email(submission, config)
-    else:
-        subject, html = _class_email(submission, config)
+@dataclass
+class OutgoingEmail:
+    to: list[str]
+    subject: str
+    html: str
+    # (filename, content, MIME type)
+    attachments: list[tuple[str, bytes, str]] = field(default_factory=list)
 
+
+def _to_mime(config: Config, email: OutgoingEmail) -> MIMEMultipart:
     message = MIMEMultipart("mixed")
-    message["Subject"] = subject
+    message["Subject"] = email.subject
     message["From"] = config.zoho_address
-    message["To"] = ", ".join(recipients(submission))
-    message.attach(MIMEText(html, "html"))
-
-    attachment = MIMEBase("text", "calendar")
-    attachment.set_payload(ics_bytes)
-    encoders.encode_base64(attachment)
-    attachment.add_header("Content-Disposition", "attachment", filename="evento.ics")
-    message.attach(attachment)
-
+    message["To"] = ", ".join(email.to)
+    message.attach(MIMEText(email.html, "html"))
+    for filename, content, mime_type in email.attachments:
+        maintype, subtype = mime_type.split("/", 1)
+        attachment = MIMEBase(maintype, subtype)
+        attachment.set_payload(content)
+        encoders.encode_base64(attachment)
+        attachment.add_header("Content-Disposition", "attachment", filename=filename)
+        message.attach(attachment)
     return message
 
 
-def _send(config: Config, to: list[str], message: MIMEMultipart) -> dict[str, tuple[int, bytes]]:
-    """Sends the message; returns the recipients the server refused.
-
-    smtplib raises SMTPRecipientsRefused only when *every* recipient is
-    refused; a partial refusal comes back as this dict instead.
-    """
+def _send_smtp(config: Config, email: OutgoingEmail) -> dict[str, tuple[int, bytes]]:
+    """smtplib raises SMTPRecipientsRefused only when *every* recipient is
+    refused; a partial refusal comes back as the returned dict instead."""
     with smtplib.SMTP_SSL(_SMTP_HOST, _SMTP_PORT) as server:
         server.login(config.zoho_address, config.zoho_app_password)
-        return server.sendmail(config.zoho_address, to, message.as_string())
+        return server.sendmail(config.zoho_address, email.to, _to_mime(config, email).as_string())
+
+
+def _send(config: Config, email: OutgoingEmail) -> dict[str, tuple[int, bytes]]:
+    """Sends through the Zoho Mail HTTPS API when its OAuth credentials are
+    set (hosts like Render's free tier block outbound SMTP), else via SMTP.
+    Returns the recipients the server refused (always empty for the API,
+    which fails the whole call instead)."""
+    if getattr(config, "zoho_refresh_token", ""):
+        zoho_api.send(config, email)
+        return {}
+    return _send_smtp(config, email)
 
 
 def send_confirmation_email(
     config: Config, submission: Submission, ics_bytes: bytes
 ) -> dict[str, tuple[int, bytes]]:
-    return _send(config, recipients(submission), _build_message(submission, ics_bytes, config))
+    if isinstance(submission, AdvisorySubmission):
+        subject, html = _advisory_email(submission, config)
+    else:
+        subject, html = _class_email(submission, config)
+    return _send(
+        config,
+        OutgoingEmail(
+            recipients(submission), subject, html, [("evento.ics", ics_bytes, "text/calendar")]
+        ),
+    )
 
 
 def send_invoice_email(
     config: Config, submission: Submission, pdf_bytes: bytes, invoice_number: str
 ) -> dict[str, tuple[int, bytes]]:
-    message = MIMEMultipart("mixed")
-    message["Subject"] = f"Factura {invoice_number}"
-    message["From"] = config.zoho_address
-    message["To"] = ", ".join(recipients(submission))
-    message.attach(
-        MIMEText(
-            _wrap_email_html(
-                f"<p>Hola {submission.name},</p><p>Adjuntamos tu factura.</p>"
-                f"{_signature_html(config)}"
-            ),
-            "html",
-        )
+    html = _wrap_email_html(
+        f"<p>Hola {submission.name},</p><p>Adjuntamos tu factura.</p>{_signature_html(config)}"
     )
-
-    attachment = MIMEBase("application", "pdf")
-    attachment.set_payload(pdf_bytes)
-    encoders.encode_base64(attachment)
-    attachment.add_header(
-        "Content-Disposition", "attachment", filename=f"factura-{invoice_number}.pdf"
+    return _send(
+        config,
+        OutgoingEmail(
+            recipients(submission),
+            f"Factura {invoice_number}",
+            html,
+            [(f"factura-{invoice_number}.pdf", pdf_bytes, "application/pdf")],
+        ),
     )
-    message.attach(attachment)
-
-    return _send(config, recipients(submission), message)
 
 
 def send_receipt_email(
@@ -232,29 +244,19 @@ def send_receipt_email(
         f"<td><strong>{escape(value)}</strong></td></tr>"
         for label, value in details
     )
-    message = MIMEMultipart("mixed")
-    message["Subject"] = f"Recibo de pago por servicios N.º {receipt_number}"
-    message["From"] = config.zoho_address
-    message["To"] = to_email
-    message.attach(
-        MIMEText(
-            _wrap_email_html(
-                f"<p>Hola {escape(to_name)},</p>"
-                "<p>Adjuntamos el recibo de pago por tus servicios en este trabajo:</p>"
-                f'<table role="presentation" cellpadding="0" cellspacing="0">{rows}</table>'
-                "<p>Gracias por tu colaboración.</p>"
-                f"{_signature_html(config)}"
-            ),
-            "html",
-        )
+    html = _wrap_email_html(
+        f"<p>Hola {escape(to_name)},</p>"
+        "<p>Adjuntamos el recibo de pago por tus servicios en este trabajo:</p>"
+        f'<table role="presentation" cellpadding="0" cellspacing="0">{rows}</table>'
+        "<p>Gracias por tu colaboración.</p>"
+        f"{_signature_html(config)}"
     )
-
-    attachment = MIMEBase("application", "pdf")
-    attachment.set_payload(pdf_bytes)
-    encoders.encode_base64(attachment)
-    attachment.add_header(
-        "Content-Disposition", "attachment", filename=f"recibo-{receipt_number}.pdf"
+    return _send(
+        config,
+        OutgoingEmail(
+            [to_email],
+            f"Recibo de pago por servicios N.º {receipt_number}",
+            html,
+            [(f"recibo-{receipt_number}.pdf", pdf_bytes, "application/pdf")],
+        ),
     )
-    message.attach(attachment)
-
-    return _send(config, [to_email], message)

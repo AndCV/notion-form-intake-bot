@@ -1,0 +1,21 @@
+# What goes into the Docker build context. Secrets and
+# the earnings workbook must never leave this machine: settings reach the
+# host as environment variables instead.
+.env
+.env.*
+!.env.example
+*.csv
+*.xlsx
+*.xls
+.git/
+.github/
+.gstack/
+.vscode/
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
+tests/
+sample_invoice.*
