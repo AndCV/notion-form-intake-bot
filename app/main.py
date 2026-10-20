@@ -1,4 +1,4 @@
-"""Web app: the owner registers services here; it replaces the Notion form.
+"""Web app: the owner registers services here (it replaced the Notion form).
 
 Single user, password-protected. Server-rendered HTML (Jinja2) with a few
 lines of inline JS, so it works on a phone without a frontend build.

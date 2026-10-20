@@ -302,7 +302,7 @@ def test_double_submit_with_same_token_creates_one_service(client, fake):
 
 
 def test_before_cutover_creation_is_refused_with_503(client, fake):
-    """protects: edge rule 1 -- no invoice number is handed out before the Notion cutover;
+    """protects: edge rule 1 -- no invoice number is handed out before the counter is seeded;
     fails_when: a service is created or emailed without counters.invoice;
     no_claim: none beyond protects."""
     with psycopg.connect(TEST_DB, autocommit=True) as conn:

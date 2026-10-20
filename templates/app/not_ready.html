@@ -3,7 +3,7 @@
 {% block content %}
 <h1>Facturación no inicializada</h1>
 <div class="card">
-  <p>Todavía no se puede registrar servicios aquí: el contador de facturas se crea en el corte con Notion, para que ningún número se repita entre los dos sistemas.</p>
+  <p>El contador de facturas de esta base de datos todavía no existe. Créalo una sola vez con <code>python scripts/migrate.py --seed-invoice-counter N</code>, donde N es el último número de factura ya emitido.</p>
   <p class="muted">No se guardó nada ni se envió ningún correo.</p>
 </div>
 <a class="btn secondary block" href="/">Volver</a>

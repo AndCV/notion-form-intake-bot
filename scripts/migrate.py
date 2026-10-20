@@ -7,10 +7,10 @@
 Safe to run on every deploy: the schema is all IF NOT EXISTS, and the
 receipt counter is only created if missing.
 
---seed-invoice-counter belongs to the Notion cutover (issue #1, edge rule 1):
-run it only after the Notion poller is disabled, with the last invoice number
-Notion handed out. It refuses to run twice, so the two systems can never hand
-out the same number.
+--seed-invoice-counter sets the last invoice number already issued, once
+per database (done 2026-10-20 at 72, the last number Notion handed out
+before the cutover in issue #1). It refuses to run twice, so no number can
+be issued twice.
 """
 
 from __future__ import annotations

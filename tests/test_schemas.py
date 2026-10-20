@@ -1,91 +1,53 @@
-from datetime import date
+from datetime import date, datetime, timezone
+from decimal import Decimal
 
-import pytest
-
-from lib.schemas import AdvisorySubmission, ClassSubmission, RowError, submission_from_page
-
-
-def _page(page_id="page-1", **overrides):
-    properties = {
-        "Nombre": {"title": [{"plain_text": "Ana Lopez"}]},
-        "Tipo": {"select": {"name": "Asesoría"}},
-        "Correo": {"email": "ana@example.com"},
-        "Fecha ": {"date": {"start": "2026-08-01T00:00:00.000-06:00"}},
-        "Calendar Event ID": {"rich_text": []},
-        "Email Enviado": {"checkbox": False},
-    }
-    properties.update(overrides)
-    return {"id": page_id, "properties": properties}
+from lib.schemas import AdvisorySubmission, ClassSubmission, recipients, submission_from_service
 
 
-def test_parse_advisory_page():
-    submission = submission_from_page(_page())
+def _service(**overrides):
+    base = dict(
+        id=7, client_name="Cliente A", job="Cálculo", kind="trabajo",
+        scheduled_at=None, deadline=date(2026, 10, 30), price=Decimal("15000.00"),
+        notes=None, emails=["a@example.com", "b@example.com"], calendar_event_id=None,
+        confirmation_sent_at=None, invoice_number="0000073", invoice_sent_at=None,
+    )  # fmt: skip
+    base.update(overrides)
+    return base
 
-    assert isinstance(submission, AdvisorySubmission)
-    assert submission.page_id == "page-1"
-    assert submission.name == "Ana Lopez"
-    assert submission.deadline == date(2026, 8, 1)
-    assert submission.calendar_event_id is None
-    assert submission.email_sent is False
+
+def test_work_becomes_an_all_day_submission_with_every_email():
+    """protects: a "trabajo" maps to the all-day kind, with all recipients and the
+    job as invoice line when there's no detail;
+    fails_when: the kind, recipients or invoice line are wrong;
+    no_claim: none beyond protects."""
+    sub = submission_from_service(_service(), "America/Costa_Rica")
+
+    assert isinstance(sub, AdvisorySubmission)
+    assert sub.page_id == "service-7" and sub.deadline == date(2026, 10, 30)
+    assert recipients(sub) == ["a@example.com", "b@example.com"] and sub.email == "a@example.com"
+    assert sub.detail == "Cálculo" and sub.price == 15000.0 and sub.invoice_number == "0000073"
+    assert not sub.email_sent and not sub.invoice_sent
 
 
-def test_parse_class_page():
-    page = _page(
-        Tipo={"select": {"name": "Clases"}},
-        **{"Fecha ": {"date": {"start": "2026-08-02T15:30:00.000-06:00"}}},
+def test_class_is_shown_in_the_business_timezone():
+    """protects: a class stored as a UTC instant comes back at local wall-clock time;
+    fails_when: the calendar/email would show UTC (6 hours off in Costa Rica);
+    no_claim: none beyond protects."""
+    utc = datetime(2026, 10, 21, 21, 30, tzinfo=timezone.utc)
+    sub = submission_from_service(
+        _service(kind="clase", scheduled_at=utc, deadline=None, notes="Tutoría"), "America/Costa_Rica"
     )
 
-    submission = submission_from_page(page)
-
-    assert isinstance(submission, ClassSubmission)
-    assert submission.scheduled_at.hour == 15
-    assert submission.scheduled_at.minute == 30
+    assert isinstance(sub, ClassSubmission)
+    assert sub.scheduled_at.strftime("%Y-%m-%d %H:%M") == "2026-10-21 15:30"
+    assert sub.detail == "Tutoría"
 
 
-def test_parse_page_with_existing_calendar_event_and_email_sent():
-    page = _page(
-        **{
-            "Calendar Event ID": {"rich_text": [{"plain_text": "evt-123"}]},
-            "Email Enviado": {"checkbox": True},
-        }
-    )
+def test_recipients_falls_back_to_the_single_email():
+    """protects: a submission built with one email still has a recipient list;
+    fails_when: it returns an empty list;
+    no_claim: none beyond protects."""
+    sub = AdvisorySubmission(page_id="x", name="A", email="a@example.com", deadline=date(2026, 1, 1),
+                             calendar_event_id=None, email_sent=False)  # fmt: skip
 
-    submission = submission_from_page(page)
-
-    assert submission.calendar_event_id == "evt-123"
-    assert submission.email_sent is True
-
-
-def test_missing_required_field_raises():
-    page = _page(Correo={"email": None})
-    with pytest.raises(RowError):
-        submission_from_page(page)
-
-
-def test_empty_placeholder_row_raises():
-    """A row created by hand in Notion, without data from the form yet."""
-    page = {
-        "id": "page-empty",
-        "properties": {
-            "Nombre": {"title": []},
-            "Tipo": {"select": None},
-            "Correo": {"email": None},
-            "Fecha ": {"date": None},
-            "Calendar Event ID": {"rich_text": []},
-            "Email Enviado": {"checkbox": False},
-        },
-    }
-    with pytest.raises(RowError):
-        submission_from_page(page)
-
-
-def test_unknown_type_raises():
-    page = _page(Tipo={"select": {"name": "Otro"}})
-    with pytest.raises(RowError):
-        submission_from_page(page)
-
-
-def test_invalid_date_raises():
-    page = _page(**{"Fecha ": {"date": {"start": "not a date"}}})
-    with pytest.raises(RowError):
-        submission_from_page(page)
+    assert recipients(sub) == ["a@example.com"]

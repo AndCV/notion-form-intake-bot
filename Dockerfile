@@ -22,6 +22,7 @@ COPY templates ./templates
 COPY db ./db
 COPY scripts ./scripts
 
-# The host sets $PORT. --proxy-headers so request.client is the visitor,
-# not the host's load balancer.
-CMD exec uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-8080}" --proxy-headers --forwarded-allow-ips="*"
+# Applies db/schema.sql on every start (idempotent, about a second), so a
+# schema change ships with the code that needs it. The host sets $PORT.
+# --proxy-headers so request.client is the visitor, not the load balancer.
+CMD python scripts/migrate.py && exec uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-8080}" --proxy-headers --forwarded-allow-ips="*"

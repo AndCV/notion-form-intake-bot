@@ -1,0 +1,49 @@
+name: Tests
+
+# Render deploys main only after this passes (its auto-deploy trigger is
+# "checks pass"), so a red run keeps the previous version live.
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      # Disposable database for tests/test_app.py: each test drops and
+      # recreates its schema.
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: forms_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 2s
+          --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      # WeasyPrint's system libraries (same set as the Dockerfile).
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libpango-1.0-0 libpangocairo-1.0-0 libcairo2 \
+            libgdk-pixbuf2.0-0 libffi-dev shared-mime-info fonts-liberation
+
+      - run: pip install -r requirements-dev.txt
+
+      # The real-workbook tests (LEDGER_CSV) stay local: that file holds
+      # client data and is never committed.
+      - run: pytest -q
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:test@localhost:5432/forms_test

@@ -23,14 +23,6 @@ def _require(name: str) -> str:
 
 class Config:
     def __init__(self) -> None:
-        # Only the Notion poller needs these (scripts/poll_notion.py checks
-        # them); the web app runs without Notion.
-        self.notion_token = os.environ.get("NOTION_TOKEN", "")
-        # The Notion API (2025-09-03+) splits "database" from "data source":
-        # properties and rows live in the data source, not the database
-        # container itself (see README).
-        self.notion_data_source_id = os.environ.get("NOTION_DATA_SOURCE_ID", "")
-
         # Email is sent via Zoho Mail (SMTP + App Password) instead of a
         # transactional provider: there's no verified custom domain, and
         # Zoho doesn't require one to send to arbitrary recipients.
@@ -63,14 +55,9 @@ class Config:
 
         self.timezone = os.environ.get("TIMEZONE", "UTC")
         self.class_duration_minutes = int(os.environ.get("CLASS_DURATION_MINUTES", "60"))
-        self.create_advisory_calendar_event = (
-            os.environ.get("ADVISORY_CREATE_CALENDAR_EVENT", "true").lower() == "true"
-        )
 
-        # Invoice PDF content (see lib/invoicing.py / templates/invoice.html).
-        # A row only gets invoiced once it has a price set (see
-        # scripts/poll_notion.py) -- these fields are about the invoice's
-        # letterhead, not any single request.
+        # Invoice/receipt letterhead (see lib/invoicing.py, templates/invoice.html);
+        # also the web app's brand name and tagline.
         self.invoice_issuer_name = os.environ.get("INVOICE_ISSUER_NAME", "Your Name")
         self.invoice_tagline = os.environ.get("INVOICE_TAGLINE", "")
         self.invoice_phone = os.environ.get("INVOICE_PHONE", "")
@@ -80,7 +67,7 @@ class Config:
         self.invoice_payment_method = os.environ.get("INVOICE_PAYMENT_METHOD", "Bank transfer")
         self.invoice_currency_symbol = os.environ.get("INVOICE_CURRENCY_SYMBOL", "$")
 
-        # Web app only (app/main.py checks them at startup).
+        # Web app (app/main.py checks them at startup).
         self.database_url = os.environ.get("DATABASE_URL", "")
         # scrypt hash from scripts/hash_password.py, never the password itself.
         self.app_password_hash = os.environ.get("APP_PASSWORD_HASH", "")

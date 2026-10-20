@@ -2,7 +2,7 @@
 email (.ics attached), invoice email and -- when a collaborator was hired --
 their payment receipt.
 
-Same idempotent pattern as scripts/poll_notion.py: each step runs only if
+Idempotent: each step runs only if
 its marker is still empty and stamps it the moment it succeeds, so a retry
 only redoes what's missing. A failing step doesn't stop the others; the
 errors land in services.last_error for the detail page.

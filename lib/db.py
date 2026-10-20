@@ -31,7 +31,7 @@ LOGIN_MAX_FAILURES = 5
 
 
 class InvoicingNotInitialized(RuntimeError):
-    """counters has no 'invoice' row yet: the Notion cutover hasn't run."""
+    """counters has no 'invoice' row yet (scripts/migrate.py --seed-invoice-counter)."""
 
 
 class ReceiptLocked(ValueError):

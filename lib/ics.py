@@ -17,11 +17,11 @@ from .schemas import AdvisorySubmission, ClassSubmission, Submission
 
 def build_ics(submission: Submission, timezone: str, class_duration_minutes: int) -> bytes:
     calendar = Calendar()
-    calendar.add("prodid", "-//notion-form-intake-bot//EN")
+    calendar.add("prodid", "-//acv-servicios//EN")
     calendar.add("version", "2.0")
 
     event = Event()
-    event.add("uid", f"{submission.page_id}@notion-form-intake-bot")
+    event.add("uid", f"{submission.page_id}@acv-servicios")
     event.add("dtstamp", datetime.now(dt_timezone.utc))
 
     if isinstance(submission, AdvisorySubmission):

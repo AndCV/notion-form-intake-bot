@@ -1,10 +1,9 @@
 """Builds the invoice PDF: renders templates/invoice.html with Jinja2, then
 converts it to PDF with WeasyPrint.
 
-Kept free of any Notion/email dependency so it's easy to test and to run
-standalone (see scripts/generate_sample_invoice.py). The invoice number
-itself is computed by the caller (see NotionRepository.get_last_invoice_number)
-and just passed in here already formatted.
+Kept free of any database/email dependency so it's easy to test and to run
+standalone (see scripts/generate_sample_invoice.py). The invoice number is
+taken by the caller (lib/db.create_service) and passed in already formatted.
 """
 
 from __future__ import annotations
