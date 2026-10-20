@@ -33,9 +33,12 @@
     <li>{{ "✅" if s.calendar_event_id else "❌" }} Calendario</li>
     <li>{{ "✅" if s.confirmation_sent_at else "❌" }} Confirmación{% if s.confirmation_sent_at %} <span class="muted">· {{ s.confirmation_sent_at | dmy }}</span>{% endif %}</li>
     <li>{{ "✅" if s.invoice_sent_at else "❌" }} Factura{% if s.invoice_sent_at %} <span class="muted">· {{ s.invoice_sent_at | dmy }}</span>{% endif %}</li>
+    {% if s.collaborator_id %}
+    <li>{{ "✅" if s.receipt_sent_at else "❌" }} Recibo a {{ s.receipt_to_name or s.collaborator_name }}{% if s.receipt_sent_at %} <span class="muted">· {{ s.receipt_to_email }} · {{ s.receipt_sent_at | dmy }}</span>{% endif %}</li>
+    {% endif %}
   </ul>
   {% if s.last_error %}<pre class="err">{{ s.last_error }}</pre>{% endif %}
-  {% if not (s.calendar_event_id and s.confirmation_sent_at and s.invoice_sent_at) %}
+  {% if not (s.calendar_event_id and s.confirmation_sent_at and s.invoice_sent_at and (s.receipt_sent_at or not s.collaborator_id)) %}
   <form method="post" action="/servicios/{{ s.id }}/reintentar">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <button class="btn" type="submit">Reintentar pendientes</button>

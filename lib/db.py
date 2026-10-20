@@ -77,9 +77,55 @@ def _all(conn: psycopg.Connection, sql: str, params: Any = None) -> list[dict[st
 # --- collaborators ---------------------------------------------------------
 
 
+class DuplicateEmail(ValueError):
+    """Another collaborator already uses that email."""
+
+
 def list_collaborators(conn: psycopg.Connection, active_only: bool = True) -> list[dict[str, Any]]:
     where = "WHERE active" if active_only else ""
-    return _all(conn, f"SELECT id, name, email, active FROM collaborators {where} ORDER BY name")
+    return _all(
+        conn,
+        f"SELECT id, name, email, active FROM collaborators {where} ORDER BY active DESC, name",
+    )
+
+
+def get_collaborator(conn: psycopg.Connection, collaborator_id: int) -> dict[str, Any] | None:
+    return _one(
+        conn, "SELECT id, name, email, active FROM collaborators WHERE id = %s", (collaborator_id,)
+    )
+
+
+def create_collaborator(conn: psycopg.Connection, name: str, email: str) -> int:
+    try:
+        row = _one(
+            conn,
+            "INSERT INTO collaborators (name, email) VALUES (%s, %s) RETURNING id",
+            (name, email),
+        )
+    except psycopg.errors.UniqueViolation as exc:
+        raise DuplicateEmail(email) from exc
+    conn.commit()
+    return row["id"]
+
+
+def update_collaborator(conn: psycopg.Connection, collaborator_id: int, name: str, email: str) -> None:
+    """Receipts already sent keep the name/email they were issued to
+    (services.receipt_to_*); only future receipts use the new values."""
+    try:
+        conn.execute(
+            "UPDATE collaborators SET name = %s, email = %s WHERE id = %s",
+            (name, email, collaborator_id),
+        )
+    except psycopg.errors.UniqueViolation as exc:
+        raise DuplicateEmail(email) from exc
+    conn.commit()
+
+
+def set_collaborator_active(conn: psycopg.Connection, collaborator_id: int, active: bool) -> None:
+    conn.execute(
+        "UPDATE collaborators SET active = %s WHERE id = %s", (active, collaborator_id)
+    )
+    conn.commit()
 
 
 # --- services ---------------------------------------------------------------
@@ -271,6 +317,17 @@ def mark_step(conn: psycopg.Connection, service_id: int, column: str, value: Any
     if column not in _STEP_COLUMNS:
         raise ValueError(f"not a step column: {column}")
     conn.execute(f"UPDATE services SET {column} = %s WHERE id = %s", (value, service_id))
+    conn.commit()
+
+
+def mark_receipt_sent(conn: psycopg.Connection, service_id: int, name: str, email: str) -> None:
+    """Stamps the receipt as sent together with who it went to, so later
+    edits to the collaborator don't rewrite whom this receipt was issued to."""
+    conn.execute(
+        "UPDATE services SET receipt_sent_at = now(), receipt_to_name = %s, receipt_to_email = %s "
+        "WHERE id = %s",
+        (name, email, service_id),
+    )
     conn.commit()
 
 

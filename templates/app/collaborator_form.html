@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}{{ "Editar colaborador" if collaborator else "Nuevo colaborador" }}{% endblock %}
+{% block content %}
+<h1>{{ "Editar colaborador" if collaborator else "Nuevo colaborador" }}</h1>
+{% if errors %}
+<div class="errors" style="margin-bottom:14px"><ul>{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul></div>
+{% endif %}
+{% if collaborator %}
+<div class="notice">Los recibos ya enviados conservan el nombre y el correo con que se emitieron.</div>
+{% endif %}
+<form method="post" action="{{ action }}" class="card">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <label for="name">Nombre</label>
+  <input id="name" name="name" type="text" value="{{ fields.name or '' }}" required autofocus>
+  <label for="email">Correo</label>
+  <input id="email" name="email" type="email" value="{{ fields.email or '' }}" required>
+  <button class="btn block" type="submit">Guardar</button>
+  <a class="btn secondary block" href="/colaboradores">Cancelar</a>
+</form>
+{% endblock %}

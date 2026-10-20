@@ -6,6 +6,7 @@ from lib.invoicing import (
     format_currency,
     format_invoice_number,
     render_invoice_html,
+    render_receipt_html,
 )
 from lib.schemas import AdvisorySubmission
 
@@ -65,3 +66,30 @@ def test_build_invoice_pdf_produces_valid_pdf_bytes():
 
     assert pdf_bytes.startswith(b"%PDF")
     assert len(pdf_bytes) > 1000
+
+
+def test_invoice_keeps_its_title_labels_terms_and_payment_method():
+    """protects: making the template shared didn't change the client invoice;
+    fails_when: the invoice loses FACTURA, its labels, terms or payment method;
+    no_claim: visual layout is checked by eye with generate_sample_invoice.py."""
+    html = render_invoice_html(_config(), _submission(), "0000001", date(2026, 7, 29))
+
+    assert "<h1>FACTURA</h1>" in html
+    assert "FACTURAR A:" in html and "Factura N.&ordm;:" in html
+    assert "Bank transfer" in html and "Ministerio de Hacienda" in html
+    assert "RECIBO" not in html
+
+
+def test_receipt_names_the_collaborator_and_only_their_amount():
+    """protects: the collaborator receipt is titled, addressed and priced correctly;
+    fails_when: it reads as an invoice, shows a bank line, or the wrong amount;
+    no_claim: none beyond protects."""
+    html = render_receipt_html(
+        _config(), "Colaborador Uno", "Cliente: X · Trabajo: Y", 15000, "0000007", date(2026, 10, 20)
+    )
+
+    assert "<h1>RECIBO DE PAGO</h1>" in html
+    assert "PAGADO A:" in html and "Recibo N.&ordm;:" in html and "0000007" in html
+    assert "Colaborador Uno" in html and "$15000" in html
+    assert "MÉTODO DE PAGO" not in html and "M&Eacute;TODO DE PAGO" not in html
+    assert "<h1>FACTURA</h1>" not in html

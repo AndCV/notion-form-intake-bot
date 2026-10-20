@@ -3,7 +3,7 @@ from email import message_from_string
 from email.header import decode_header
 from types import SimpleNamespace
 
-from lib.email_client import send_confirmation_email, send_invoice_email
+from lib.email_client import send_confirmation_email, send_invoice_email, send_receipt_email
 from lib.schemas import AdvisorySubmission, ClassSubmission
 
 BUSINESS_NAME = "Test Co"
@@ -126,3 +126,20 @@ def test_invoice_email_is_sent_via_zoho_with_pdf_attached(mocker):
     attachments = [part for part in message.walk() if part.get_filename() == "factura-0000042.pdf"]
     assert len(attachments) == 1
     assert attachments[0].get_payload(decode=True) == b"%PDF"
+
+
+def test_receipt_email_goes_only_to_the_collaborator_with_pdf(mocker):
+    """protects: the receipt reaches the collaborator alone, with its details and PDF;
+    fails_when: the client is copied, details are missing, or the PDF isn't attached;
+    no_claim: SMTP is mocked."""
+    smtp_ssl, fake_smtp = _fake_smtp_ssl(mocker)
+    details = [("Cliente", "Ana"), ("Trabajo", "Cálculo"), ("Monto", "₡15.000")]
+
+    send_receipt_email(_config(), "Colaborador Uno", "uno@example.com", details, b"%PDF", "0000007")
+
+    message = _assert_sent_via_zoho(smtp_ssl, fake_smtp, "uno@example.com")
+    assert _decode_subject(message) == "Recibo de pago por servicios N.º 0000007"
+    body = _decoded_html_body(message)
+    assert "Hola Colaborador Uno" in body and "₡15.000" in body and "Cálculo" in body
+    [pdf] = [p for p in message.walk() if p.get_filename() == "recibo-0000007.pdf"]
+    assert pdf.get_payload(decode=True) == b"%PDF"

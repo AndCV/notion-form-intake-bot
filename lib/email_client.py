@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import smtplib
 from email import encoders
+from html import escape
 from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -214,3 +215,46 @@ def send_invoice_email(
     message.attach(attachment)
 
     return _send(config, recipients(submission), message)
+
+
+def send_receipt_email(
+    config: Config,
+    to_name: str,
+    to_email: str,
+    details: list[tuple[str, str]],
+    pdf_bytes: bytes,
+    receipt_number: str,
+) -> dict[str, tuple[int, bytes]]:
+    """Payment receipt for a collaborator. `details` are (label, value) rows
+    shown in the body -- client, job, date, amount; never the client's price."""
+    rows = "".join(
+        f'<tr><td style="color:{_GRAY};padding:2px 14px 2px 0;">{escape(label)}</td>'
+        f"<td><strong>{escape(value)}</strong></td></tr>"
+        for label, value in details
+    )
+    message = MIMEMultipart("mixed")
+    message["Subject"] = f"Recibo de pago por servicios N.º {receipt_number}"
+    message["From"] = config.zoho_address
+    message["To"] = to_email
+    message.attach(
+        MIMEText(
+            _wrap_email_html(
+                f"<p>Hola {escape(to_name)},</p>"
+                "<p>Adjuntamos el recibo de pago por tus servicios en este trabajo:</p>"
+                f'<table role="presentation" cellpadding="0" cellspacing="0">{rows}</table>'
+                "<p>Gracias por tu colaboración.</p>"
+                f"{_signature_html(config)}"
+            ),
+            "html",
+        )
+    )
+
+    attachment = MIMEBase("application", "pdf")
+    attachment.set_payload(pdf_bytes)
+    encoders.encode_base64(attachment)
+    attachment.add_header(
+        "Content-Disposition", "attachment", filename=f"recibo-{receipt_number}.pdf"
+    )
+    message.attach(attachment)
+
+    return _send(config, [to_email], message)

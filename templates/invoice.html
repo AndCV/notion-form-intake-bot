@@ -2,7 +2,14 @@
 <html lang="es">
 <head>
 <meta charset="utf-8">
-<title>Factura {{ invoice_number }}</title>
+{#- Shared by the client invoice and the collaborator payment receipt
+    (lib/invoicing.py): the receipt overrides the title, labels and terms;
+    the invoice keeps the defaults below. -#}
+{%- set document_title = document_title | default("FACTURA") -%}
+{%- set party_label = party_label | default("FACTURAR A:") -%}
+{%- set number_label = number_label | default("Factura N.&ordm;:") -%}
+{%- set terms = terms | default("Este documento se emite únicamente como comprobante de pago y no constituye una factura electrónica con validez fiscal ante el Ministerio de Hacienda.") -%}
+<title>{{ document_title | title }} {{ invoice_number }}</title>
 <style>
     @page {
         size: A4;
@@ -271,18 +278,18 @@
                 {% if tagline %}<p class="issuer-tagline">{{ tagline }}</p>{% endif %}
             </div>
             <div class="invoice-title">
-                <h1>FACTURA</h1>
+                <h1>{{ document_title }}</h1>
                 <div class="accent"></div>
             </div>
         </div>
 
         <div class="info-row">
             <div class="bill-to">
-                <div class="label">FACTURAR A:</div>
+                <div class="label">{{ party_label }}</div>
                 <div class="client-name">{{ client_name }}</div>
             </div>
             <div class="meta-table">
-                <div><span class="meta-label">Factura N.&ordm;:</span> {{ invoice_number }}</div>
+                <div><span class="meta-label">{{ number_label | safe }}</span> {{ invoice_number }}</div>
                 <div><span class="meta-label">Fecha:</span> {{ issue_date }}</div>
             </div>
         </div>
@@ -310,16 +317,14 @@
 
         <div class="bottom-row">
             <div class="payment-terms">
+                {% if payment_method %}
                 <div class="label">M&Eacute;TODO DE PAGO</div>
                 <table>
                     <tr><td>Banco:</td><td>{{ payment_method }}</td></tr>
                 </table>
+                {% endif %}
                 <div class="label">T&Eacute;RMINOS Y CONDICIONES</div>
-                <p class="terms-text">
-                    Este documento se emite &uacute;nicamente como comprobante de pago y no
-                    constituye una factura electr&oacute;nica con validez fiscal ante el
-                    Ministerio de Hacienda.
-                </p>
+                <p class="terms-text">{{ terms }}</p>
             </div>
             <div class="totals">
                 <div class="subtotal-row">

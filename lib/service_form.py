@@ -43,6 +43,18 @@ class FormResult:
     errors: list[str] = field(default_factory=list)
 
 
+def parse_collaborator_form(fields: dict[str, str]) -> tuple[str, str, list[str]]:
+    """Returns (name, email, errors) for the add/edit collaborator form."""
+    name = (fields.get("name") or "").strip()
+    email = (fields.get("email") or "").strip().lower()
+    errors = []
+    if not name:
+        errors.append("Falta el nombre.")
+    if not _EMAIL_RE.match(email):
+        errors.append("El correo no es válido.")
+    return name, email, errors
+
+
 def _amount(raw: str) -> Decimal | None:
     raw = (raw or "").strip()
     return Decimal(raw) if raw.isdigit() else None

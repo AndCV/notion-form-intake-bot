@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Colaboradores{% endblock %}
+{% block content %}
+<h1>Colaboradores</h1>
+<a class="btn block" href="/colaboradores/nuevo" style="margin:0 0 14px">+ Agregar colaborador</a>
+
+<div class="card list" style="padding:0">
+  {% for c in collaborators %}
+  <div class="item" style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--line)">
+    <div>
+      <strong>{{ c.name }}</strong> {% if not c.active %}<span class="pill">inactivo</span>{% endif %}
+      <div class="meta">{{ c.email }}</div>
+    </div>
+    <div style="display:flex;gap:6px">
+      <a class="btn secondary small" href="/colaboradores/{{ c.id }}/editar">Editar</a>
+      <form method="post" action="/colaboradores/{{ c.id }}/{{ 'desactivar' if c.active else 'activar' }}" style="margin:0">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <button class="btn secondary small" type="submit">{{ "Desactivar" if c.active else "Activar" }}</button>
+      </form>
+    </div>
+  </div>
+  {% else %}
+  <p class="muted" style="padding:14px;margin:0">Todavía no hay colaboradores.</p>
+  {% endfor %}
+</div>
+<p class="muted">Un colaborador desactivado no aparece al registrar servicios, pero sus servicios y recibos anteriores se conservan.</p>
+{% endblock %}

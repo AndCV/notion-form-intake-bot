@@ -73,6 +73,8 @@
     {% else %}
     <p class="muted">No hay colaboradores activos.</p>
     {% endif %}
+    <a class="muted" href="/colaboradores/nuevo" target="_blank" rel="noopener">+ Agregar colaborador</a>
+    <span class="muted">(se abre en otra pestaña; luego recarga esta)</span>
     <label for="collaborator_pay">Pago al colaborador</label>
     <input id="collaborator_pay" name="collaborator_pay" type="number" min="0" step="1" inputmode="numeric" value="{{ fields.collaborator_pay or '' }}">
     <p class="muted" id="profit-hint"></p>

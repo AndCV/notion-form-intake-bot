@@ -45,7 +45,8 @@ SCHEMA = (Path(__file__).resolve().parent.parent / "db" / "schema.sql").read_tex
 class FakeSenders:
     def __init__(self):
         self.calendar, self.confirmations, self.invoices = [], [], []
-        self.calendar_error = None
+        self.receipts, self.receipt_pdfs = [], []
+        self.calendar_error = self.receipt_error = None
         self.refused = {}
 
     def senders(self):
@@ -55,7 +56,19 @@ class FakeSenders:
             send_invoice_email=self._invoice,
             build_ics=lambda sub, tz, minutes: b"ICS",
             build_invoice_pdf=lambda cfg, sub, number, issued: b"%PDF",
+            send_receipt_email=self._receipt,
+            build_receipt_pdf=self._receipt_pdf,
         )
+
+    def _receipt(self, config, to_name, to_email, details, pdf, number):
+        if self.receipt_error:
+            raise RuntimeError(self.receipt_error)
+        self.receipts.append(dict(name=to_name, email=to_email, details=details, number=number))
+        return {}
+
+    def _receipt_pdf(self, config, name, description, amount, number, issued):
+        self.receipt_pdfs.append(dict(name=name, description=description, amount=amount))
+        return b"%PDF"
 
     def _calendar(self, config, sub):
         if self.calendar_error:
@@ -83,6 +96,7 @@ def pg():
             "(1, 'Colaborador Uno', 'uno@example.com'), (2, 'Colaborador Dos', 'dos@example.com')"
         )
         conn.execute("UPDATE collaborators SET active = FALSE WHERE id = 2")
+        conn.execute("SELECT setval('collaborators_id_seq', 2)")
     yield TEST_DB
 
 
@@ -235,7 +249,7 @@ def test_class_with_two_emails_runs_every_step_once(client, fake):
 def test_work_with_collaborator_stores_pay_profit_and_receipt_number(client, fake):
     """protects: criterion 8 data -- profit = price - pay, all-day event, receipt number taken;
     fails_when: profit or the receipt number is wrong, or the event is timed;
-    no_claim: sending the receipt itself is part 4 of issue #1."""
+    no_claim: the receipt email itself is covered in test_receipt_goes_to_the_collaborator."""
     _login(client)
     response = _create(
         client, emails=["a@example.com"], kind="trabajo", scheduled_at="", deadline="2026-10-30",
@@ -407,15 +421,14 @@ def test_edit_never_resends_or_renumbers(client, fake):
     assert len(fake.confirmations) == 1 and len(fake.invoices) == 1
 
 
-def test_collaborator_cannot_change_after_receipt_was_sent(client):
+def test_collaborator_cannot_change_after_receipt_was_sent(client, fake):
     """protects: edge rule 6 -- a sent receipt's collaborator and amount are frozen;
     fails_when: the edit is saved;
-    no_claim: receipt_sent_at is stamped directly (sending is part 4)."""
+    no_claim: none beyond protects."""
     _login(client)
     hired = dict(hire="1", collaborator_id="1", collaborator_pay="5000")
     sid = _service_id(_create(client, **hired))
-    with db.connect(TEST_DB, autocommit=True) as conn:
-        conn.execute("UPDATE services SET receipt_sent_at = now() WHERE id = %s", (sid,))
+    assert len(fake.receipts) == 1
     data = _service_fields(**(hired | {"collaborator_pay": "6000"}))
     data |= {"csrf": _csrf(client, f"/servicios/{sid}/editar"), "emails": ["a@example.com"]}
 
@@ -454,3 +467,126 @@ def test_month_page_lists_services_and_totals(client):
 
     assert "Cliente A" in html and "Cliente B" in html
     assert "₡40.000" in html and "₡35.000" in html
+
+
+# --- collaborator receipts (part 4) ---------------------------------------------------
+
+
+def test_receipt_goes_to_the_collaborator_without_the_client_price(client, fake):
+    """protects: criterion 8 -- the hired collaborator gets a receipt with its number,
+    client, job, date and their amount, never what the client paid;
+    fails_when: the receipt is missing, misaddressed, or shows the client's price;
+    no_claim: FakeSenders stand in for WeasyPrint and Zoho."""
+    _login(client)
+    sid = _service_id(_create(
+        client, emails=["a@example.com"], kind="trabajo", scheduled_at="", deadline="2026-10-30",
+        price="25000", hire="1", collaborator_id="1", collaborator_pay="15000",
+    ))  # fmt: skip
+
+    [receipt] = fake.receipts
+    assert (receipt["name"], receipt["email"], receipt["number"]) == (
+        "Colaborador Uno", "uno@example.com", "0000001",
+    )
+    assert receipt["details"] == [
+        ("Cliente", "Cliente A"), ("Trabajo", "Cálculo"), ("Entrega", "30/10/2026"), ("Monto", "₡15.000"),
+    ]  # fmt: skip
+    [pdf] = fake.receipt_pdfs
+    assert pdf["amount"] == 15000 and "25" not in pdf["description"]
+    [row] = _rows("SELECT * FROM services WHERE id = %s", (sid,))
+    assert row["receipt_sent_at"] is not None
+    assert (row["receipt_to_name"], row["receipt_to_email"]) == ("Colaborador Uno", "uno@example.com")
+    assert "✅ Recibo a Colaborador Uno" in client.get(f"/servicios/{sid}").text
+
+
+def test_no_receipt_without_a_hired_collaborator(client, fake):
+    """protects: receipts only go out when "Contratar colaborador" was checked;
+    fails_when: a receipt is sent for a solo service;
+    no_claim: none beyond protects."""
+    _login(client)
+    _create(client)
+
+    assert fake.receipts == []
+
+
+def test_failed_receipt_is_retried_alone(client, fake):
+    """protects: a failed receipt shows ❌ and a retry sends only the receipt;
+    fails_when: the client gets a second confirmation or invoice;
+    no_claim: none beyond protects."""
+    _login(client)
+    fake.receipt_error = "Zoho caído"
+    sid = _service_id(_create(client, hire="1", collaborator_id="1", collaborator_pay="5000"))
+    assert "Recibo: Zoho caído" in _rows("SELECT last_error FROM services")[0]["last_error"]
+
+    fake.receipt_error = None
+    client.post(f"/servicios/{sid}/reintentar", data={"csrf": _csrf(client, f"/servicios/{sid}")})
+
+    assert len(fake.receipts) == 1
+    assert len(fake.confirmations) == 1 and len(fake.invoices) == 1
+    assert _rows("SELECT last_error FROM services")[0]["last_error"] is None
+
+
+def test_add_collaborator_appears_in_the_service_form(client):
+    """protects: criterion 8b -- "+ Agregar colaborador" makes them hireable right away;
+    fails_when: the new collaborator isn't offered in the form;
+    no_claim: none beyond protects."""
+    _login(client)
+    response = client.post(
+        "/colaboradores/nuevo",
+        data={"csrf": _csrf(client, "/colaboradores/nuevo"), "name": "Nueva Persona", "email": "Nueva@Example.com"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert _rows("SELECT email FROM collaborators WHERE name = 'Nueva Persona'")[0]["email"] == "nueva@example.com"
+    assert "Nueva Persona" in client.get("/servicios/nuevo").text
+
+
+@pytest.mark.parametrize(
+    "name, email, message",
+    [("Otro", "uno@example.com", "Ya hay un colaborador"), ("Otro", "no-es-correo", "no es válido"),
+     ("", "x@example.com", "Falta el nombre")],
+)  # fmt: skip
+def test_invalid_collaborator_is_refused(client, name, email, message):
+    """protects: criterion 8b -- duplicate or invalid emails answer 400 in Spanish;
+    fails_when: the collaborator is saved;
+    no_claim: none beyond protects."""
+    _login(client)
+    response = client.post(
+        "/colaboradores/nuevo",
+        data={"csrf": _csrf(client, "/colaboradores/nuevo"), "name": name, "email": email},
+    )
+
+    assert response.status_code == 400 and message in response.text
+    assert len(_rows("SELECT id FROM collaborators")) == 2
+
+
+def test_deactivated_collaborator_leaves_the_form_but_keeps_history(client):
+    """protects: criterion 8b -- deactivating hides them from new services only;
+    fails_when: they stay hireable, or their past service loses the name;
+    no_claim: none beyond protects."""
+    _login(client)
+    sid = _service_id(_create(client, hire="1", collaborator_id="1", collaborator_pay="5000"))
+
+    client.post("/colaboradores/1/desactivar", data={"csrf": _csrf(client, "/colaboradores")})
+
+    new_form = client.get("/servicios/nuevo").text
+    assert "Colaborador Uno" not in new_form and "No hay colaboradores activos" in new_form
+    assert "Colaborador Uno" in client.get(f"/servicios/{sid}").text
+    assert "inactivo" in client.get("/colaboradores").text
+
+
+def test_editing_a_collaborator_keeps_whom_a_sent_receipt_was_issued_to(client):
+    """protects: edge rule 7 -- a sent receipt keeps the original name and email;
+    fails_when: renaming the collaborator rewrites the past receipt;
+    no_claim: none beyond protects."""
+    _login(client)
+    sid = _service_id(_create(client, hire="1", collaborator_id="1", collaborator_pay="5000"))
+
+    client.post(
+        "/colaboradores/1/editar",
+        data={"csrf": _csrf(client, "/colaboradores/1/editar"), "name": "Nombre Nuevo", "email": "nuevo@example.com"},
+    )
+
+    [row] = _rows("SELECT receipt_to_name, receipt_to_email FROM services WHERE id = %s", (sid,))
+    assert (row["receipt_to_name"], row["receipt_to_email"]) == ("Colaborador Uno", "uno@example.com")
+    assert "Recibo a Colaborador Uno" in client.get(f"/servicios/{sid}").text

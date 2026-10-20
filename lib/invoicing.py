@@ -54,6 +54,60 @@ def render_invoice_html(
     )
 
 
+RECEIPT_TERMS = (
+    "Recibo de pago por servicios profesionales prestados de forma independiente. "
+    "Este documento no constituye una factura electrónica con validez fiscal ante el "
+    "Ministerio de Hacienda."
+)
+
+
+def render_receipt_html(
+    config: Config,
+    collaborator_name: str,
+    description: str,
+    amount: float,
+    receipt_number: str,
+    issue_date: date,
+) -> str:
+    """Payment receipt for a collaborator: same letterhead as the invoice,
+    with the business as payer and the collaborator as payee."""
+    formatted_amount = format_currency(amount, config.invoice_currency_symbol)
+    template = _env.get_template("invoice.html")
+    return template.render(
+        document_title="RECIBO DE PAGO",
+        party_label="PAGADO A:",
+        number_label="Recibo N.&ordm;:",
+        terms=RECEIPT_TERMS,
+        issuer_name=config.invoice_issuer_name,
+        tagline=config.invoice_tagline,
+        invoice_number=receipt_number,
+        issue_date=issue_date.strftime("%d / %m / %Y"),
+        client_name=collaborator_name,
+        item_description=description,
+        item_price=formatted_amount,
+        item_total=formatted_amount,
+        payment_method="",
+        phone=config.invoice_phone,
+        email=config.invoice_email,
+        address=config.invoice_address,
+        website=config.invoice_website,
+    )
+
+
+def build_receipt_pdf(
+    config: Config,
+    collaborator_name: str,
+    description: str,
+    amount: float,
+    receipt_number: str,
+    issue_date: date,
+) -> bytes:
+    html = render_receipt_html(
+        config, collaborator_name, description, amount, receipt_number, issue_date
+    )
+    return render_invoice_pdf(html)
+
+
 def render_invoice_pdf(html: str) -> bytes:
     return HTML(string=html).write_pdf()
 

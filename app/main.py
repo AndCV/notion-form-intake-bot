@@ -34,7 +34,7 @@ from lib import db
 from lib.auth import verify_password
 from lib.config import Config, ConfigError, get_config
 from lib.pipeline import Senders, ServiceBusy, default_senders, process_service
-from lib.service_form import MAX_EMAILS, parse_service_form
+from lib.service_form import MAX_EMAILS, parse_collaborator_form, parse_service_form
 
 _TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates" / "app"
 
@@ -415,6 +415,103 @@ def create_app(config: Config | None = None, senders: Senders | None = None) -> 
         with conn() as c:
             db.soft_delete_service(c, service_id)
         return RedirectResponse("/", status_code=303)
+
+    # --- collaborators ---------------------------------------------------------
+
+    @app.get("/colaboradores")
+    def collaborators(request: Request):
+        require_login(request)
+        with conn() as c:
+            return render(
+                request, "collaborators.html", collaborators=db.list_collaborators(c, False)
+            )
+
+    def collaborator_form(request, status, *, action, fields, errors, collaborator=None):
+        return render(
+            request,
+            "collaborator_form.html",
+            status=status,
+            action=action,
+            fields=fields,
+            errors=errors,
+            collaborator=collaborator,
+        )
+
+    @app.get("/colaboradores/nuevo")
+    def new_collaborator(request: Request):
+        require_login(request)
+        return collaborator_form(
+            request, 200, action="/colaboradores/nuevo", fields={}, errors=[]
+        )
+
+    @app.post("/colaboradores/nuevo")
+    async def create_collaborator(request: Request):
+        require_login(request)
+        form = await checked_form(request)
+        if form is None:
+            return forbidden()
+        fields = {k: str(form.get(k, "")) for k in ("name", "email")}
+        name, email, errors = parse_collaborator_form(fields)
+        if not errors:
+            with conn() as c:
+                try:
+                    db.create_collaborator(c, name, email)
+                except db.DuplicateEmail:
+                    errors = ["Ya hay un colaborador con ese correo."]
+        if errors:
+            return collaborator_form(
+                request, 400, action="/colaboradores/nuevo", fields=fields, errors=errors
+            )
+        return RedirectResponse("/colaboradores", status_code=303)
+
+    @app.get("/colaboradores/{collaborator_id}/editar")
+    def edit_collaborator_page(request: Request, collaborator_id: int):
+        require_login(request)
+        with conn() as c:
+            collaborator = db.get_collaborator(c, collaborator_id)
+        if collaborator is None:
+            return HTMLResponse("No existe ese colaborador.", status_code=404)
+        return collaborator_form(
+            request, 200, action=f"/colaboradores/{collaborator_id}/editar",
+            fields=collaborator, errors=[], collaborator=collaborator,
+        )  # fmt: skip
+
+    @app.post("/colaboradores/{collaborator_id}/editar")
+    async def edit_collaborator(request: Request, collaborator_id: int):
+        require_login(request)
+        form = await checked_form(request)
+        if form is None:
+            return forbidden()
+        fields = {k: str(form.get(k, "")) for k in ("name", "email")}
+        name, email, errors = parse_collaborator_form(fields)
+        with conn() as c:
+            collaborator = db.get_collaborator(c, collaborator_id)
+            if collaborator is None:
+                return HTMLResponse("No existe ese colaborador.", status_code=404)
+            if not errors:
+                try:
+                    db.update_collaborator(c, collaborator_id, name, email)
+                except db.DuplicateEmail:
+                    errors = ["Ya hay un colaborador con ese correo."]
+        if errors:
+            return collaborator_form(
+                request, 400, action=f"/colaboradores/{collaborator_id}/editar",
+                fields=fields, errors=errors, collaborator=collaborator,
+            )  # fmt: skip
+        return RedirectResponse("/colaboradores", status_code=303)
+
+    @app.post("/colaboradores/{collaborator_id}/{action}")
+    async def toggle_collaborator(request: Request, collaborator_id: int, action: str):
+        require_login(request)
+        if action not in ("activar", "desactivar"):
+            return HTMLResponse("Acción inválida.", status_code=404)
+        if await checked_form(request) is None:
+            return forbidden()
+        with conn() as c:
+            if db.get_collaborator(c, collaborator_id) is None:
+                return HTMLResponse("No existe ese colaborador.", status_code=404)
+            db.set_collaborator_active(c, collaborator_id, action == "activar")
+        return RedirectResponse("/colaboradores", status_code=303)
 
     return app
 
