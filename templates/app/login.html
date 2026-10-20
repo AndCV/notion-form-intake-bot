@@ -1,6 +1,12 @@
 {% extends "base.html" %}
+{% from "_logo.html" import mark %}
 {% block title %}Entrar{% endblock %}
 {% block content %}
+<div style="display:flex;flex-direction:column;align-items:center;margin:28px 0 18px;text-align:center">
+  {{ mark(72) }}
+  <div style="font-size:22px;font-weight:700;color:var(--navy);margin-top:12px">{{ brand_name }}</div>
+  {% if brand_tagline %}<div class="muted">{{ brand_tagline }}</div>{% endif %}
+</div>
 <h1>Entrar</h1>
 <form method="post" action="/login" class="card">
   <input type="hidden" name="csrf" value="{{ csrf }}">

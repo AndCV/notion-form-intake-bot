@@ -1,0 +1,12 @@
+{#- Brand mark: the layered corner of the invoice letterhead
+    (templates/invoice.html, "top-left layered corner"), same polygons and
+    colors, on a white tile so the navy triangle shows on the navy header. -#}
+{% macro mark(size=32) -%}
+<svg width="{{ size }}" height="{{ size }}" viewBox="0 0 56 56" role="img" aria-label="Logo" style="display:block;border-radius:8px;background:#fff">
+  <polygon points="0,0 56,0 0,56" fill="#3CCACF"/>
+  <polygon points="0,0 43,0 0,43" fill="#0F226F"/>
+  <polygon points="0,15 27,15 0,42" fill="#3CCACF"/>
+  <polygon points="0,26 16,26 0,42" fill="#0F226F"/>
+  <polygon points="56,56 39,56 56,39" fill="#3CCACF"/>
+</svg>
+{%- endmacro %}

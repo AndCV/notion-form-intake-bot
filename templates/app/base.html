@@ -1,10 +1,12 @@
-<!doctype html>
+{% from "_logo.html" import mark %}<!doctype html>
 <html lang="es">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<title>{% block title %}Servicios{% endblock %}</title>
+<meta name="theme-color" content="#0F226F">
+<title>{% block title %}Servicios{% endblock %} · {{ brand_name }}</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 56 56'%3E%3Crect width='56' height='56' rx='10' fill='%23fff'/%3E%3Cpolygon points='0,0 56,0 0,56' fill='%233CCACF'/%3E%3Cpolygon points='0,0 43,0 0,43' fill='%230F226F'/%3E%3Cpolygon points='0,15 27,15 0,42' fill='%233CCACF'/%3E%3Cpolygon points='0,26 16,26 0,42' fill='%230F226F'/%3E%3Cpolygon points='56,56 39,56 56,39' fill='%233CCACF'/%3E%3C/svg%3E">
 <script>document.documentElement.classList.add("js");</script>
 <style>
   :root {
@@ -18,6 +20,13 @@
   header { background: var(--navy); color: #fff; border-bottom: 3px solid var(--teal); }
   header .wrap { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   header a { color: #fff; text-decoration: none; font-weight: 600; }
+  header .wrap { flex-wrap: wrap; row-gap: 10px; }
+  header .brand { display: flex; align-items: center; gap: 10px; line-height: 1.15; white-space: nowrap; }
+  header .brand small { display: block; font-weight: 400; font-size: 11px; color: var(--teal); }
+  header nav { display: flex; align-items: center; gap: 14px; margin-left: auto; }
+  header nav a { font-weight: 400; font-size: 15px; }
+  header nav form { margin: 0; flex: none; }
+  header nav button { width: auto; }
   header form { margin: 0; }
   header button { background: none; border: 1px solid rgba(255,255,255,.4); color: #fff;
                   padding: 6px 10px; border-radius: 8px; font-size: 14px; }
@@ -70,20 +79,25 @@
   table.data thead th { color: var(--gray); font-weight: 600; font-size: 12px; }
   table.data tfoot td { font-weight: 700; color: var(--navy); border-bottom: 0; }
   pre.err { white-space: pre-wrap; font-size: 13px; background: #FDECEA; padding: 8px 10px; border-radius: 8px; }
-  @media (max-width: 480px) { .stats { grid-template-columns: 1fr 1fr; } .row { flex-direction: column; gap: 0; } }
+  @media (max-width: 480px) {
+    .stats { gap: 6px; } .stat { padding: 8px 9px; } .stat b { font-size: 15px; }
+    .row { flex-direction: column; gap: 0; }
+  }
 </style>
 </head>
 <body>
 <header>
   <div class="wrap">
-    <a href="/">Servicios</a>
+    <a href="/" class="brand">{{ mark(30) }}<span>{{ brand_name }}<small>{{ brand_tagline }}</small></span></a>
     {% if request.session.get("auth") %}
-    <a href="/resumen" style="font-weight:400;margin-left:auto">Resumen</a>
-    <a href="/colaboradores" style="font-weight:400">Colaboradores</a>
-    <form method="post" action="/logout">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
-      <button type="submit">Salir</button>
-    </form>
+    <nav>
+      <a href="/resumen">Resumen</a>
+      <a href="/colaboradores">Colaboradores</a>
+      <form method="post" action="/logout">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <button type="submit">Salir</button>
+      </form>
+    </nav>
     {% endif %}
   </div>
 </header>

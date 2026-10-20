@@ -114,7 +114,14 @@ def create_app(config: Config | None = None, senders: Senders | None = None) -> 
         return request.session["csrf"]
 
     def render(request: Request, name: str, status: int = 200, **ctx: Any) -> HTMLResponse:
-        ctx.update(request=request, csrf=csrf_token(request), max_emails=MAX_EMAILS)
+        ctx.update(
+            request=request,
+            csrf=csrf_token(request),
+            max_emails=MAX_EMAILS,
+            # Same letterhead as the invoice (INVOICE_* settings).
+            brand_name=getattr(config, "invoice_issuer_name", "") or "Servicios",
+            brand_tagline=getattr(config, "invoice_tagline", ""),
+        )
         return templates.TemplateResponse(request, name, ctx, status_code=status)
 
     def require_login(request: Request) -> None:
