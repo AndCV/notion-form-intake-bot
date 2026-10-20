@@ -16,9 +16,10 @@ from __future__ import annotations
 
 import unicodedata
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any, Union
+from zoneinfo import ZoneInfo
 
 from dateutil import parser as dateutil_parser
 from dateutil.parser import ParserError
@@ -109,6 +110,9 @@ class AdvisorySubmission:
     detail: str | None = None
     invoice_number: str | None = None
     invoice_sent: bool = False
+    # Every recipient, when there's more than one (web app services). Notion
+    # rows only ever carry `email`.
+    emails: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -123,9 +127,37 @@ class ClassSubmission:
     detail: str | None = None
     invoice_number: str | None = None
     invoice_sent: bool = False
+    emails: list[str] = field(default_factory=list)
 
 
 Submission = Union[AdvisorySubmission, ClassSubmission]
+
+
+def recipients(submission: Submission) -> list[str]:
+    return submission.emails or [submission.email]
+
+
+def submission_from_service(service: dict[str, Any], timezone: str) -> Submission:
+    """Adapts a web app service row (lib/db.get_service) to the Submission
+    shape the calendar, .ics, email and invoice code already consume."""
+    emails = list(service["emails"])
+    common = dict(
+        page_id=f"service-{service['id']}",
+        name=service["client_name"],
+        email=emails[0],
+        emails=emails,
+        calendar_event_id=service["calendar_event_id"],
+        email_sent=service["confirmation_sent_at"] is not None,
+        price=float(service["price"]),
+        detail=service["notes"] or service["job"],
+        invoice_number=service["invoice_number"],
+        invoice_sent=service["invoice_sent_at"] is not None,
+    )
+    if service["kind"] == "clase":
+        # Stored as an instant; shown and scheduled in the business's zone.
+        local = service["scheduled_at"].astimezone(ZoneInfo(timezone))
+        return ClassSubmission(scheduled_at=local, **common)
+    return AdvisorySubmission(deadline=service["deadline"], **common)
 
 
 def submission_from_page(page: dict[str, Any]) -> Submission:

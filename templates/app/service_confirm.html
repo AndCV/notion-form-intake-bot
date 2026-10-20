@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Confirmar servicio{% endblock %}
+{% block content %}
+<h1>Confirmar y enviar</h1>
+<div class="card">
+  <dl>
+    <dt>Cliente</dt><dd>{{ data.client_name }}</dd>
+    <dt>Trabajo</dt><dd>{{ data.job }}</dd>
+    {% if data.kind == "clase" %}
+    <dt>Clase</dt><dd>{{ data.scheduled_at | dmy }}</dd>
+    {% else %}
+    <dt>Entrega</dt><dd>{{ data.deadline | dmy }}</dd>
+    {% endif %}
+    <dt>Precio</dt><dd>{{ data.price | money }}</dd>
+    {% if collaborator %}
+    <dt>Colaborador</dt><dd>{{ collaborator.name }} · {{ data.collaborator_pay | money }}</dd>
+    <dt>Tu ganancia</dt><dd>{{ data.profit | money }}</dd>
+    {% endif %}
+  </dl>
+</div>
+
+<div class="card">
+  <strong>Se va a enviar:</strong>
+  <ul>
+    <li>Confirmación{% if data.kind == "clase" %} con el evento de la clase{% endif %} y factura por {{ data.price | money }} a: <strong>{{ emails | join(", ") }}</strong></li>
+    <li>Evento en tu calendario</li>
+    {% if collaborator %}<li>Recibo de pago por {{ data.collaborator_pay | money }} a {{ collaborator.name }} ({{ collaborator.email }})</li>{% endif %}
+  </ul>
+</div>
+
+<form method="post" action="/servicios">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <input type="hidden" name="submission_token" value="{{ token }}">
+  {% for name, value in fields.items() %}<input type="hidden" name="{{ name }}" value="{{ value }}">{% endfor %}
+  {% for e in emails %}<input type="hidden" name="emails" value="{{ e }}">{% endfor %}
+  <button class="btn block" type="submit">Confirmar y enviar</button>
+</form>
+<a class="btn secondary block" href="javascript:history.back()">Volver a editar</a>
+{% endblock %}

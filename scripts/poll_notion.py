@@ -20,7 +20,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from lib.calendar_client import CalendarRepository
-from lib.config import Config, get_config
+from lib.config import Config, ConfigError, get_config
 from lib.email_client import send_confirmation_email, send_invoice_email
 from lib.ics import build_ics
 from lib.invoicing import build_invoice_pdf, format_invoice_number
@@ -66,6 +66,12 @@ def process_page(config: Config, notion: NotionRepository, page: dict) -> None:
 
 def run() -> None:
     config = get_config()
+    for name, value in (
+        ("NOTION_TOKEN", config.notion_token),
+        ("NOTION_DATA_SOURCE_ID", config.notion_data_source_id),
+    ):
+        if not value:
+            raise ConfigError(f"Missing environment variable {name}")
     notion = NotionRepository(config.notion_token, config.notion_data_source_id)
 
     pending = notion.find_pending_pages()

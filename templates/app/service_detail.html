@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}{{ s.client_name }}{% endblock %}
+{% block content %}
+<h1>{{ s.client_name }} <span class="pill">{{ s.job }}</span></h1>
+
+{% if aviso == "calendario" %}
+<div class="notice">Cambiaste la fecha, la hora o el tipo: el evento del calendario <strong>no</strong> se actualiza solo. Muévelo a mano.</div>
+{% elif aviso == "editado" %}
+<div class="notice">Cambios guardados. No se reenvió ningún correo.</div>
+{% endif %}
+
+<div class="card">
+  <dl>
+    <dt>Fecha</dt><dd>{{ s.service_date | dmy }}</dd>
+    {% if s.kind == "clase" %}<dt>Clase</dt><dd>{{ s.scheduled_at | dmy }}</dd>
+    {% elif s.kind == "trabajo" %}<dt>Entrega</dt><dd>{{ s.deadline | dmy }}</dd>{% endif %}
+    <dt>Correos</dt><dd>{{ s.emails | join(", ") if s.emails else "—" }}</dd>
+    <dt>Precio</dt><dd>{{ s.price | money }}</dd>
+    {% if s.collaborator_pay > 0 %}
+    <dt>Colaborador</dt><dd>{{ s.collaborator_name or "sin registrar" }} · {{ s.collaborator_pay | money }}</dd>
+    {% endif %}
+    <dt>Ganancia</dt><dd><strong>{{ s.profit | money }}</strong></dd>
+    {% if s.invoice_number %}<dt>Factura</dt><dd>N.º {{ s.invoice_number }}</dd>{% endif %}
+    {% if s.receipt_number %}<dt>Recibo</dt><dd>N.º {{ s.receipt_number }}</dd>{% endif %}
+    {% if s.notes %}<dt>Detalle</dt><dd>{{ s.notes }}</dd>{% endif %}
+  </dl>
+</div>
+
+{% if s.source == "app" %}
+<h2>Envíos</h2>
+<div class="card">
+  <ul class="steps">
+    <li>{{ "✅" if s.calendar_event_id else "❌" }} Calendario</li>
+    <li>{{ "✅" if s.confirmation_sent_at else "❌" }} Confirmación{% if s.confirmation_sent_at %} <span class="muted">· {{ s.confirmation_sent_at | dmy }}</span>{% endif %}</li>
+    <li>{{ "✅" if s.invoice_sent_at else "❌" }} Factura{% if s.invoice_sent_at %} <span class="muted">· {{ s.invoice_sent_at | dmy }}</span>{% endif %}</li>
+  </ul>
+  {% if s.last_error %}<pre class="err">{{ s.last_error }}</pre>{% endif %}
+  {% if not (s.calendar_event_id and s.confirmation_sent_at and s.invoice_sent_at) %}
+  <form method="post" action="/servicios/{{ s.id }}/reintentar">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button class="btn" type="submit">Reintentar pendientes</button>
+  </form>
+  {% endif %}
+</div>
+{% else %}
+<p class="muted">Importado de la hoja de ganancias.</p>
+{% endif %}
+
+<div class="row" style="margin-top:14px">
+  <a class="btn secondary" href="/servicios/{{ s.id }}/editar" style="text-align:center">Editar</a>
+  <a class="btn secondary" href="/servicios/{{ s.id }}/borrar" style="text-align:center;color:var(--bad)">Borrar</a>
+</div>
+<a class="btn secondary block" href="/servicios?anio={{ s.service_date.year }}&mes={{ s.service_date.month }}">Volver al mes</a>
+{% endblock %}

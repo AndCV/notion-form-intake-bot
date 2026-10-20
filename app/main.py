@@ -1,0 +1,431 @@
+"""Web app: the owner registers services here; it replaces the Notion form.
+
+Single user, password-protected. Server-rendered HTML (Jinja2) with a few
+lines of inline JS, so it works on a phone without a frontend build.
+
+Run locally:
+    uvicorn app.main:app --reload        (with COOKIE_SECURE=false in .env)
+"""
+
+from __future__ import annotations
+
+import secrets
+import sys
+import uuid
+from datetime import date, datetime
+from decimal import Decimal
+from pathlib import Path
+from typing import Any
+from zoneinfo import ZoneInfo
+
+import psycopg
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.templating import Jinja2Templates
+from starlette.middleware.sessions import SessionMiddleware
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
+from lib import db
+from lib.auth import verify_password
+from lib.config import Config, ConfigError, get_config
+from lib.pipeline import Senders, ServiceBusy, default_senders, process_service
+from lib.service_form import MAX_EMAILS, parse_service_form
+
+_TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates" / "app"
+
+MONTH_NAMES = [
+    "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+    "Julio", "Agosto", "Setiembre", "Octubre", "Noviembre", "Diciembre",
+]  # fmt: skip
+
+# Single-valued form inputs, in the order the confirm page re-posts them.
+_FORM_FIELDS = (
+    "service_date", "client_name", "job", "kind", "scheduled_at", "deadline",
+    "price", "notes", "hire", "collaborator_id", "collaborator_pay",
+)  # fmt: skip
+
+
+class _LoginRequired(Exception):
+    pass
+
+
+def _month_range(year: int, month: int) -> tuple[date, date]:
+    start = date(year, month, 1)
+    end = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
+    return start, end
+
+
+def create_app(config: Config | None = None, senders: Senders | None = None) -> FastAPI:
+    config = config or get_config()
+    for name, value in (
+        ("DATABASE_URL", config.database_url),
+        ("APP_PASSWORD_HASH", config.app_password_hash),
+        ("SESSION_SECRET", config.session_secret),
+    ):
+        if not value:
+            raise ConfigError(f"Missing environment variable {name}")
+    senders = senders or default_senders()
+    tz = ZoneInfo(config.timezone)
+
+    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=config.session_secret,
+        session_cookie="sid",
+        max_age=30 * 24 * 3600,
+        same_site="lax",
+        https_only=config.cookie_secure,
+    )
+
+    templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
+
+    def money(value: Any) -> str:
+        amount = int(Decimal(value or 0))
+        return f"{config.invoice_currency_symbol}{amount:,}".replace(",", ".")
+
+    def dmy(value: date | datetime | None) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, datetime):
+            return value.astimezone(tz).strftime("%d/%m/%Y %H:%M")
+        return value.strftime("%d/%m/%Y")
+
+    templates.env.filters["money"] = money
+    templates.env.filters["dmy"] = dmy
+
+    def today() -> date:
+        return datetime.now(tz).date()
+
+    def conn() -> psycopg.Connection:
+        return db.connect(config.database_url, autocommit=True)
+
+    def csrf_token(request: Request) -> str:
+        if "csrf" not in request.session:
+            request.session["csrf"] = secrets.token_urlsafe(32)
+        return request.session["csrf"]
+
+    def render(request: Request, name: str, status: int = 200, **ctx: Any) -> HTMLResponse:
+        ctx.update(request=request, csrf=csrf_token(request), max_emails=MAX_EMAILS)
+        return templates.TemplateResponse(request, name, ctx, status_code=status)
+
+    def require_login(request: Request) -> None:
+        if not request.session.get("auth"):
+            raise _LoginRequired()
+
+    async def checked_form(request: Request):
+        form = await request.form()
+        expected = request.session.get("csrf")
+        if not expected or not secrets.compare_digest(str(form.get("csrf", "")), expected):
+            return None
+        return form
+
+    def forbidden() -> HTMLResponse:
+        return HTMLResponse("Solicitud inválida (CSRF). Recarga la página.", status_code=403)
+
+    def form_values(form) -> tuple[dict[str, str], list[str]]:
+        fields = {name: str(form.get(name, "")) for name in _FORM_FIELDS}
+        emails = [str(e) for e in form.getlist("emails")]
+        return fields, emails
+
+    def service_values(service: dict[str, Any]) -> tuple[dict[str, str], list[str]]:
+        scheduled = service["scheduled_at"]
+        fields = {
+            "service_date": service["service_date"].isoformat(),
+            "client_name": service["client_name"],
+            "job": service["job"],
+            "kind": service["kind"] or "",
+            "scheduled_at": scheduled.astimezone(tz).strftime("%Y-%m-%dT%H:%M") if scheduled else "",
+            "deadline": service["deadline"].isoformat() if service["deadline"] else "",
+            "price": str(int(service["price"])),
+            "notes": service["notes"] or "",
+            "hire": "1" if service["collaborator_id"] else "",
+            "collaborator_id": str(service["collaborator_id"] or ""),
+            "collaborator_pay": str(int(service["collaborator_pay"])),
+        }
+        return fields, list(service["emails"])
+
+    def form_page(request, c, status, *, action, fields, emails, errors, service=None):
+        return render(
+            request,
+            "service_form.html",
+            status=status,
+            action=action,
+            fields=fields,
+            emails=emails or [""],
+            errors=errors,
+            service=service,
+            collaborators=db.list_collaborators(c),
+        )
+
+    @app.exception_handler(_LoginRequired)
+    async def _to_login(request: Request, exc: _LoginRequired) -> Response:
+        return RedirectResponse("/login", status_code=302)
+
+    @app.get("/healthz")
+    def healthz() -> JSONResponse:
+        return JSONResponse({"ok": True})
+
+    # --- login -------------------------------------------------------------
+
+    @app.get("/login")
+    def login_page(request: Request):
+        return render(request, "login.html")
+
+    @app.post("/login")
+    async def login(request: Request):
+        form = await checked_form(request)
+        if form is None:
+            return forbidden()
+        ip = request.client.host if request.client else ""
+        with conn() as c:
+            if db.login_locked(c):
+                return render(
+                    request,
+                    "login.html",
+                    status=429,
+                    error="Demasiados intentos fallidos. Espera 15 minutos.",
+                )
+            ok = verify_password(str(form.get("password", "")), config.app_password_hash)
+            db.record_login_attempt(c, ip, ok)
+        if not ok:
+            return render(request, "login.html", status=401, error="Contraseña incorrecta.")
+        request.session.clear()
+        request.session["auth"] = True
+        return RedirectResponse("/", status_code=303)
+
+    @app.post("/logout")
+    async def logout(request: Request):
+        if await checked_form(request) is None:
+            return forbidden()
+        request.session.clear()
+        return RedirectResponse("/login", status_code=303)
+
+    # --- services ------------------------------------------------------------
+
+    def month_page(request: Request, year: int, month: int):
+        start, end = _month_range(year, month)
+        prev_y, prev_m = (year - 1, 12) if month == 1 else (year, month - 1)
+        next_y, next_m = (year + 1, 1) if month == 12 else (year, month + 1)
+        with conn() as c:
+            return render(
+                request,
+                "services.html",
+                services=db.list_services(c, start, end),
+                totals=db.totals(c, start, end),
+                title=f"{MONTH_NAMES[month - 1]} {year}",
+                prev=f"/servicios?anio={prev_y}&mes={prev_m}",
+                next=f"/servicios?anio={next_y}&mes={next_m}",
+            )
+
+    @app.get("/")
+    def home(request: Request):
+        require_login(request)
+        now = today()
+        return month_page(request, now.year, now.month)
+
+    @app.get("/servicios")
+    def services(request: Request, anio: int | None = None, mes: int | None = None):
+        require_login(request)
+        now = today()
+        year, month = anio or now.year, mes or now.month
+        if not 1 <= month <= 12 or not 2000 <= year <= 2100:
+            return HTMLResponse("Mes inválido.", status_code=400)
+        return month_page(request, year, month)
+
+    @app.get("/servicios/nuevo")
+    def new_service(request: Request):
+        require_login(request)
+        with conn() as c:
+            return form_page(
+                request,
+                c,
+                200,
+                action="/servicios/confirmar",
+                fields={"service_date": today().isoformat(), "kind": "clase"},
+                emails=[""],
+                errors=[],
+            )
+
+    @app.post("/servicios/confirmar")
+    async def confirm_service(request: Request):
+        require_login(request)
+        form = await checked_form(request)
+        if form is None:
+            return forbidden()
+        fields, emails = form_values(form)
+        with conn() as c:
+            collaborators = db.list_collaborators(c)
+            result = parse_service_form(
+                fields, emails, config.timezone, {x["id"] for x in collaborators}
+            )
+            if result.errors:
+                return form_page(
+                    request, c, 400, action="/servicios/confirmar",
+                    fields=fields, emails=emails, errors=result.errors,
+                )  # fmt: skip
+        collaborator = next(
+            (x for x in collaborators if x["id"] == result.value.collaborator_id), None
+        )
+        return render(
+            request,
+            "service_confirm.html",
+            data=result.value,
+            fields=fields,
+            emails=result.value.emails,
+            collaborator=collaborator,
+            token=str(uuid.uuid4()),
+        )
+
+    @app.post("/servicios")
+    async def create_service(request: Request):
+        require_login(request)
+        form = await checked_form(request)
+        if form is None:
+            return forbidden()
+        try:
+            token = uuid.UUID(str(form.get("submission_token", "")))
+        except ValueError:
+            return HTMLResponse("Falta el identificador del envío.", status_code=400)
+        fields, emails = form_values(form)
+        with conn() as c:
+            existing = db.find_service_by_token(c, token)
+            if existing:
+                return RedirectResponse(f"/servicios/{existing}", status_code=303)
+            collaborators = db.list_collaborators(c)
+            result = parse_service_form(
+                fields, emails, config.timezone, {x["id"] for x in collaborators}
+            )
+            if result.errors:
+                return form_page(
+                    request, c, 400, action="/servicios/confirmar",
+                    fields=fields, emails=emails, errors=result.errors,
+                )  # fmt: skip
+            try:
+                service_id = db.create_service(c, result.value, token)
+            except db.InvoicingNotInitialized:
+                return render(request, "not_ready.html", status=503)
+            except psycopg.errors.UniqueViolation:
+                # A double submit raced this one past the token check.
+                existing = db.find_service_by_token(c, token)
+                return RedirectResponse(f"/servicios/{existing}", status_code=303)
+            try:
+                process_service(c, config, service_id, senders)
+            except ServiceBusy:
+                pass
+        return RedirectResponse(f"/servicios/{service_id}", status_code=303)
+
+    @app.get("/servicios/{service_id}")
+    def service_detail(request: Request, service_id: int, aviso: str | None = None):
+        require_login(request)
+        with conn() as c:
+            service = db.get_service(c, service_id)
+        if service is None:
+            return HTMLResponse("No existe ese servicio.", status_code=404)
+        return render(request, "service_detail.html", s=service, aviso=aviso)
+
+    @app.post("/servicios/{service_id}/reintentar")
+    async def retry_service(request: Request, service_id: int):
+        require_login(request)
+        if await checked_form(request) is None:
+            return forbidden()
+        with conn() as c:
+            if db.get_service(c, service_id) is None:
+                return HTMLResponse("No existe ese servicio.", status_code=404)
+            try:
+                process_service(c, config, service_id, senders)
+            except ServiceBusy:
+                return HTMLResponse(
+                    "Ya se está procesando este servicio. Espera un momento y recarga.",
+                    status_code=409,
+                )
+        return RedirectResponse(f"/servicios/{service_id}", status_code=303)
+
+    @app.get("/servicios/{service_id}/editar")
+    def edit_service_page(request: Request, service_id: int):
+        require_login(request)
+        with conn() as c:
+            service = db.get_service(c, service_id)
+            if service is None:
+                return HTMLResponse("No existe ese servicio.", status_code=404)
+            fields, emails = service_values(service)
+            return form_page(
+                request, c, 200, action=f"/servicios/{service_id}/editar",
+                fields=fields, emails=emails, errors=[], service=service,
+            )  # fmt: skip
+
+    @app.post("/servicios/{service_id}/editar")
+    async def edit_service(request: Request, service_id: int):
+        require_login(request)
+        form = await checked_form(request)
+        if form is None:
+            return forbidden()
+        fields, emails = form_values(form)
+        with conn() as c:
+            service = db.get_service(c, service_id)
+            if service is None:
+                return HTMLResponse("No existe ese servicio.", status_code=404)
+            collaborators = db.list_collaborators(c)
+            # A collaborator deactivated after being hired stays valid here.
+            allowed = {x["id"] for x in collaborators} | (
+                {service["collaborator_id"]} if service["collaborator_id"] else set()
+            )
+            result = parse_service_form(fields, emails, config.timezone, allowed)
+            errors = result.errors
+            if not errors:
+                try:
+                    db.update_service(c, service_id, result.value)
+                except db.ReceiptLocked:
+                    errors = [
+                        "El recibo del colaborador ya se envió: no se puede cambiar "
+                        "el colaborador ni su pago."
+                    ]
+            if errors:
+                return form_page(
+                    request, c, 400, action=f"/servicios/{service_id}/editar",
+                    fields=fields, emails=emails, errors=errors, service=service,
+                )  # fmt: skip
+        new = result.value
+        calendar_moved = service["calendar_event_id"] and (
+            new.kind != service["kind"]
+            or new.scheduled_at != service["scheduled_at"]
+            or new.deadline != service["deadline"]
+        )
+        suffix = "?aviso=calendario" if calendar_moved else "?aviso=editado"
+        return RedirectResponse(f"/servicios/{service_id}{suffix}", status_code=303)
+
+    @app.get("/servicios/{service_id}/borrar")
+    def delete_page(request: Request, service_id: int):
+        require_login(request)
+        with conn() as c:
+            service = db.get_service(c, service_id)
+        if service is None:
+            return HTMLResponse("No existe ese servicio.", status_code=404)
+        return render(request, "service_delete.html", s=service)
+
+    @app.post("/servicios/{service_id}/borrar")
+    async def delete_service(request: Request, service_id: int):
+        require_login(request)
+        if await checked_form(request) is None:
+            return forbidden()
+        with conn() as c:
+            db.soft_delete_service(c, service_id)
+        return RedirectResponse("/", status_code=303)
+
+    return app
+
+
+def _app_or_none() -> FastAPI | None:
+    # `uvicorn app.main:app` needs a module-level app; tests build their own
+    # with create_app() and must be able to import this module without one.
+    try:
+        return create_app()
+    except ConfigError:
+        return None
+
+
+app = _app_or_none()

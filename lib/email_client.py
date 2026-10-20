@@ -21,7 +21,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 from .config import Config
-from .schemas import AdvisorySubmission, Submission
+from .schemas import AdvisorySubmission, Submission, recipients
 
 # Same palette as the invoice letterhead (see templates/invoice.html), so the
 # email signature matches the PDF branding.
@@ -159,7 +159,7 @@ def _build_message(submission: Submission, ics_bytes: bytes, config: Config) -> 
     message = MIMEMultipart("mixed")
     message["Subject"] = subject
     message["From"] = config.zoho_address
-    message["To"] = submission.email
+    message["To"] = ", ".join(recipients(submission))
     message.attach(MIMEText(html, "html"))
 
     attachment = MIMEBase("text", "calendar")
@@ -171,23 +171,30 @@ def _build_message(submission: Submission, ics_bytes: bytes, config: Config) -> 
     return message
 
 
-def _send(config: Config, recipients: list[str], message: MIMEMultipart) -> None:
+def _send(config: Config, to: list[str], message: MIMEMultipart) -> dict[str, tuple[int, bytes]]:
+    """Sends the message; returns the recipients the server refused.
+
+    smtplib raises SMTPRecipientsRefused only when *every* recipient is
+    refused; a partial refusal comes back as this dict instead.
+    """
     with smtplib.SMTP_SSL(_SMTP_HOST, _SMTP_PORT) as server:
         server.login(config.zoho_address, config.zoho_app_password)
-        server.sendmail(config.zoho_address, recipients, message.as_string())
+        return server.sendmail(config.zoho_address, to, message.as_string())
 
 
-def send_confirmation_email(config: Config, submission: Submission, ics_bytes: bytes) -> None:
-    _send(config, [submission.email], _build_message(submission, ics_bytes, config))
+def send_confirmation_email(
+    config: Config, submission: Submission, ics_bytes: bytes
+) -> dict[str, tuple[int, bytes]]:
+    return _send(config, recipients(submission), _build_message(submission, ics_bytes, config))
 
 
 def send_invoice_email(
     config: Config, submission: Submission, pdf_bytes: bytes, invoice_number: str
-) -> None:
+) -> dict[str, tuple[int, bytes]]:
     message = MIMEMultipart("mixed")
     message["Subject"] = f"Factura {invoice_number}"
     message["From"] = config.zoho_address
-    message["To"] = submission.email
+    message["To"] = ", ".join(recipients(submission))
     message.attach(
         MIMEText(
             _wrap_email_html(
@@ -206,4 +213,4 @@ def send_invoice_email(
     )
     message.attach(attachment)
 
-    _send(config, [submission.email], message)
+    return _send(config, recipients(submission), message)

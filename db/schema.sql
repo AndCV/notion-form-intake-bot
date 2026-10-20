@@ -54,6 +54,12 @@ CREATE TABLE IF NOT EXISTS services (
   CHECK (kind IS DISTINCT FROM 'trabajo' OR deadline IS NOT NULL)
 );
 
+-- Lease that keeps two requests (a double-tapped "Reintentar", or a retry
+-- racing the first run) from sending the same emails twice. A lease rather
+-- than SELECT ... FOR UPDATE because Neon's pooled connections don't keep a
+-- row lock alive across the separate commits each step makes.
+ALTER TABLE services ADD COLUMN IF NOT EXISTS processing_until TIMESTAMPTZ;
+
 CREATE INDEX IF NOT EXISTS services_date_idx ON services (service_date) WHERE deleted_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS service_emails (

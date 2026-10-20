@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<div class="nav">
+  <a class="btn secondary small" href="{{ prev }}">&larr;</a>
+  <h1 style="margin:0">{{ title }}</h1>
+  <a class="btn secondary small" href="{{ next }}">&rarr;</a>
+</div>
+
+<div class="stats">
+  <div class="stat"><b>{{ totals.count }}</b><span>Servicios</span></div>
+  <div class="stat"><b>{{ totals.price | money }}</b><span>Facturado</span></div>
+  <div class="stat"><b>{{ totals.profit | money }}</b><span>Ganancia</span></div>
+</div>
+
+<a class="btn block" href="/servicios/nuevo" style="margin:0 0 14px">+ Nuevo servicio</a>
+
+<div class="card list" style="padding:0">
+  {% for s in services %}
+  <a class="item" href="/servicios/{{ s.id }}">
+    <div>
+      <div><strong>{{ s.client_name }}</strong> <span class="muted">· {{ s.job }}</span></div>
+      <div class="meta">
+        {{ s.service_date | dmy }}
+        {% if s.collaborator_name %} · {{ s.collaborator_name }}{% endif %}
+        {% if s.last_error %} · <span class="bad">con errores</span>{% endif %}
+      </div>
+    </div>
+    <div class="amount">
+      <div>{{ s.price | money }}</div>
+      {% if s.collaborator_pay > 0 %}<div class="meta">gan. {{ s.profit | money }}</div>{% endif %}
+    </div>
+  </a>
+  {% else %}
+  <p class="muted" style="padding:14px;margin:0">No hay servicios en este mes.</p>
+  {% endfor %}
+</div>
+{% endblock %}

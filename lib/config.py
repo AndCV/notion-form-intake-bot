@@ -23,11 +23,13 @@ def _require(name: str) -> str:
 
 class Config:
     def __init__(self) -> None:
-        self.notion_token = _require("NOTION_TOKEN")
+        # Only the Notion poller needs these (scripts/poll_notion.py checks
+        # them); the web app runs without Notion.
+        self.notion_token = os.environ.get("NOTION_TOKEN", "")
         # The Notion API (2025-09-03+) splits "database" from "data source":
         # properties and rows live in the data source, not the database
         # container itself (see README).
-        self.notion_data_source_id = _require("NOTION_DATA_SOURCE_ID")
+        self.notion_data_source_id = os.environ.get("NOTION_DATA_SOURCE_ID", "")
 
         # Email is sent via Zoho Mail (SMTP + App Password) instead of a
         # transactional provider: there's no verified custom domain, and
@@ -59,6 +61,14 @@ class Config:
         self.invoice_website = os.environ.get("INVOICE_WEBSITE", "")
         self.invoice_payment_method = os.environ.get("INVOICE_PAYMENT_METHOD", "Bank transfer")
         self.invoice_currency_symbol = os.environ.get("INVOICE_CURRENCY_SYMBOL", "$")
+
+        # Web app only (app/main.py checks them at startup).
+        self.database_url = os.environ.get("DATABASE_URL", "")
+        # scrypt hash from scripts/hash_password.py, never the password itself.
+        self.app_password_hash = os.environ.get("APP_PASSWORD_HASH", "")
+        self.session_secret = os.environ.get("SESSION_SECRET", "")
+        # Off only for local http://localhost runs; Cloud Run is always HTTPS.
+        self.cookie_secure = os.environ.get("COOKIE_SECURE", "true").lower() == "true"
 
     def google_credentials_info(self) -> dict:
         raw = self.google_service_account_json.strip()

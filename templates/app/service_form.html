@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block title %}{{ "Editar servicio" if service else "Nuevo servicio" }}{% endblock %}
+{% block content %}
+<h1>{{ "Editar servicio" if service else "Nuevo servicio" }}</h1>
+
+{% if errors %}
+<div class="errors" style="margin-bottom:14px"><ul>{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul></div>
+{% endif %}
+{% if service %}
+<div class="notice">Editar solo cambia los datos guardados: no se reenvía ningún correo.</div>
+{% endif %}
+
+<form method="post" action="{{ action }}" class="card" id="service-form">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+
+  <div class="row">
+    <div>
+      <label for="service_date">Fecha del servicio</label>
+      <input id="service_date" name="service_date" type="date" value="{{ fields.service_date or '' }}" required>
+    </div>
+    <div>
+      <label for="kind">Tipo</label>
+      <select id="kind" name="kind" required>
+        <option value="clase" {{ "selected" if fields.kind == "clase" }}>Clase / tutoría</option>
+        <option value="trabajo" {{ "selected" if fields.kind == "trabajo" }}>Trabajo</option>
+      </select>
+    </div>
+  </div>
+
+  <label for="client_name">Cliente</label>
+  <input id="client_name" name="client_name" type="text" value="{{ fields.client_name or '' }}" required>
+
+  <label>Correos del cliente</label>
+  <div id="emails">
+    {% for e in emails %}
+    <div class="email-row"><input name="emails" type="email" value="{{ e }}" placeholder="correo@ejemplo.com" {{ "required" if loop.first }}></div>
+    {% endfor %}
+  </div>
+  <button type="button" class="btn secondary small" id="add-email">+ Agregar correo</button>
+  <span class="muted">Máximo {{ max_emails }}.</span>
+
+  <label for="job">Trabajo</label>
+  <input id="job" name="job" type="text" value="{{ fields.job or '' }}" placeholder="Cálculo, Programación, TFG…" required>
+
+  <div data-kind="clase">
+    <label for="scheduled_at">Fecha y hora de la clase</label>
+    <input id="scheduled_at" name="scheduled_at" type="datetime-local" value="{{ fields.scheduled_at or '' }}">
+  </div>
+  <div data-kind="trabajo">
+    <label for="deadline">Fecha de entrega</label>
+    <input id="deadline" name="deadline" type="date" value="{{ fields.deadline or '' }}">
+  </div>
+
+  <label for="price">Precio</label>
+  <input id="price" name="price" type="number" min="1" step="1" inputmode="numeric" value="{{ fields.price or '' }}" required>
+
+  <label for="notes">Detalle de la factura <span class="muted">(opcional; si lo dejas vacío se usa el trabajo)</span></label>
+  <textarea id="notes" name="notes">{{ fields.notes or '' }}</textarea>
+
+  <label class="check"><input type="checkbox" id="hire" name="hire" value="1" {{ "checked" if fields.hire }}> Contratar colaborador</label>
+  <div id="hire-fields">
+    {% if collaborators %}
+    <label for="collaborator_id">Colaborador</label>
+    <select id="collaborator_id" name="collaborator_id">
+      <option value="">Elige…</option>
+      {% for c in collaborators %}
+      <option value="{{ c.id }}" {{ "selected" if fields.collaborator_id == c.id|string }}>{{ c.name }}</option>
+      {% endfor %}
+      {% if service and service.collaborator_id and service.collaborator_id not in collaborators|map(attribute="id")|list %}
+      <option value="{{ service.collaborator_id }}" selected>{{ service.collaborator_name }} (inactivo)</option>
+      {% endif %}
+    </select>
+    {% else %}
+    <p class="muted">No hay colaboradores activos.</p>
+    {% endif %}
+    <label for="collaborator_pay">Pago al colaborador</label>
+    <input id="collaborator_pay" name="collaborator_pay" type="number" min="0" step="1" inputmode="numeric" value="{{ fields.collaborator_pay or '' }}">
+    <p class="muted" id="profit-hint"></p>
+  </div>
+
+  <button class="btn block" type="submit">{{ "Guardar cambios" if service else "Revisar y confirmar" }}</button>
+  {% if service %}<a class="btn secondary block" href="/servicios/{{ service.id }}">Cancelar</a>{% endif %}
+</form>
+
+<script>
+(function () {
+  var kind = document.getElementById("kind");
+  function syncKind() {
+    document.querySelectorAll("[data-kind]").forEach(function (el) {
+      el.classList.toggle("hidden", el.getAttribute("data-kind") !== kind.value);
+    });
+  }
+  kind.addEventListener("change", syncKind); syncKind();
+
+  var hire = document.getElementById("hire"), hireFields = document.getElementById("hire-fields");
+  function syncHire() { hireFields.classList.toggle("hidden", !hire.checked); }
+  hire.addEventListener("change", syncHire); syncHire();
+
+  var price = document.getElementById("price"), pay = document.getElementById("collaborator_pay"),
+      hint = document.getElementById("profit-hint");
+  function syncProfit() {
+    var p = parseInt(price.value || "0", 10), c = parseInt(pay.value || "0", 10);
+    hint.textContent = p ? "Tu ganancia: " + (p - c).toLocaleString("es-CR") : "";
+  }
+  price.addEventListener("input", syncProfit); pay.addEventListener("input", syncProfit); syncProfit();
+
+  var box = document.getElementById("emails"), add = document.getElementById("add-email");
+  add.addEventListener("click", function () {
+    if (box.querySelectorAll("input").length >= {{ max_emails }}) return;
+    var row = document.createElement("div"); row.className = "email-row";
+    var input = document.createElement("input");
+    input.name = "emails"; input.type = "email"; input.placeholder = "correo@ejemplo.com";
+    row.appendChild(input); box.appendChild(row); input.focus();
+  });
+})();
+</script>
+{% endblock %}
