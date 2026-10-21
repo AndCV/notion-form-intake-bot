@@ -1,7 +1,9 @@
 name: Tests
 
-# Render deploys main only after this passes (its auto-deploy trigger is
-# "checks pass"), so a red run keeps the previous version live.
+# A push to main that passes the tests deploys it to Render (the `deploy`
+# job below); a red run keeps the previous version live. Render's own
+# auto-deploy is off: the service was created from the public repo URL,
+# so Render never sees new commits by itself.
 on:
   push:
   pull_request:
@@ -47,3 +49,35 @@ jobs:
       - run: pytest -q
         env:
           TEST_DATABASE_URL: postgresql://postgres:test@localhost:5432/forms_test
+
+  deploy:
+    needs: pytest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # One deploy at a time; a newer push supersedes a queued one.
+    concurrency:
+      group: render-deploy
+      cancel-in-progress: false
+    steps:
+      - name: Deploy this commit to Render and wait until it's live
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          SERVICE: ${{ vars.RENDER_SERVICE_ID }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          api() { curl -fsS --retry 5 --retry-all-errors --retry-delay 5 -H "Authorization: Bearer $RENDER_API_KEY" -H "Accept: application/json" "$@"; }
+          deploy=$(api -X POST -H "Content-Type: application/json" \
+            -d "{\"commitId\":\"$COMMIT\"}" "https://api.render.com/v1/services/$SERVICE/deploys" | jq -r .id)
+          echo "deploy $deploy for $COMMIT"
+          for _ in $(seq 1 80); do
+            status=$(api "https://api.render.com/v1/services/$SERVICE/deploys/$deploy" | jq -r .status)
+            echo "status: $status"
+            case "$status" in
+              live) exit 0 ;;
+              build_failed|update_failed|canceled|pre_deploy_failed|deactivated) exit 1 ;;
+            esac
+            sleep 10
+          done
+          echo "timed out waiting for the deploy"; exit 1
+      - run: curl -fsS --retry 5 --retry-delay 10 --max-time 90 https://acv-servicios.onrender.com/healthz

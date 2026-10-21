@@ -189,7 +189,7 @@ with Google and Zoho faked. CI runs the same suite (`tests.yml`).
 
 ## Deploying
 
-Render watches `main` and redeploys once the **Tests** workflow passes. The
+A push to `main` deploys to Render once the **Tests** workflow passes (its `deploy` job calls the Render API with the `RENDER_API_KEY` secret and the `RENDER_SERVICE_ID` variable, then waits until the deploy is live). The
 service, `acv-servicios`, is a Docker web service on the free plan in Ohio,
 with health check `/healthz`. Its environment variables are set in the
 Render dashboard: the `.env` keys listed above plus `COOKIE_SECURE=true`.
