@@ -13,6 +13,9 @@ each service from a phone, and the app:
 5. Records the service in the earnings ledger: price, collaborator pay and
    profit, with monthly / per-cuatrimestre summaries and a CSV export in the
    owner's original workbook layout.
+6. Tracks who has paid: it reads the owner's Gmail (read-only) for Banco
+   Nacional statements (client payments) and Wink transfer emails
+   (collaborator payouts), and marks services paid.
 
 It replaced an earlier setup (an external form → Notion → a GitHub Actions
 poller) and a hand-kept Excel workbook; see issue #1 for the full spec and
@@ -30,6 +33,7 @@ Phone ──HTTPS──> Render (free web service, Docker: FastAPI + Jinja2)
 
 GitHub Actions: tests on every push (Render deploys only when they pass)
                 + a ping every 10 minutes so the free instance doesn't sleep
+                + hourly: read payment emails from Gmail (IMAP, read-only) -> Neon
 ```
 
 ## Structure
@@ -47,6 +51,8 @@ lib/zoho_api.py              # Zoho Mail REST API client (stdlib only)
 lib/invoicing.py             # invoice and receipt PDFs (WeasyPrint)
 lib/ledger.py                # earnings summary + CSV export
 lib/workbook_csv.py          # reads the old workbook's CSV export
+lib/payment_mail.py          # reads BN statements and Wink transfer emails (Gmail IMAP)
+lib/payments.py              # matches those movements to services
 lib/auth.py                  # scrypt password hashing
 db/schema.sql                # schema (idempotent; applied on every start)
 templates/invoice.html       # invoice/receipt layout (shared letterhead)
@@ -54,10 +60,12 @@ templates/app/               # web app pages
 scripts/migrate.py           # apply schema; seed a collaborator or the invoice counter
 scripts/import_2026.py       # one-time import of the 2026 workbook
 scripts/hash_password.py     # turns APP_PASSWORD into APP_PASSWORD_HASH in .env
+scripts/sync_payments.py     # reads new payment emails and matches them (hourly)
 scripts/generate_sample_invoice.py  # sample invoice PDF, no external calls
 Dockerfile                   # the image Render runs
 .github/workflows/tests.yml  # pytest + a disposable Postgres
 .github/workflows/keepalive.yml     # pings /healthz every 10 minutes
+.github/workflows/payments.yml      # runs sync_payments.py hourly
 ```
 
 ## Key decisions
@@ -91,6 +99,19 @@ Dockerfile                   # the image Render runs
   summary sheets (same class/tutoring rule as its `COUNTIF`). `/exportar.csv`
   writes the workbook's layout. Both were checked against the real 2026
   workbook (`LEDGER_CSV` test, local only).
+- **Payments are read from email, two senders only.** Banco Nacional sends
+  no email per incoming SINPE, but its monthly statement PDF lists every
+  credit with the payer's (truncated) name, so client payments are updated
+  once a month. A client service is marked paid automatically only when
+  **both** the payer's name matches the client (or a payer alias the owner
+  confirmed once) **and** the amount equals the stored price, or the sum of
+  that client's pending services. Anything else waits in "Por confirmar" on
+  `/pagos`. The owner's own transfers are recognized by the statement
+  holder's name and set aside. Collaborator payouts come from Wink's
+  "Notificación de envío" (recipient, amount, date) and are matched by the
+  collaborator's `payout_name`. Only web app services are tracked: the ones
+  imported from the workbook were already settled. The sync logs totals,
+  never names.
 - **The repo is public; the earnings data isn't.** `*.csv` / `*.xlsx` are
   gitignored, and tests use synthetic data. The real-workbook tests run only
   when `LEDGER_CSV` points at a local file.

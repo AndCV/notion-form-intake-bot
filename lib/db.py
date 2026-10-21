@@ -85,22 +85,26 @@ def list_collaborators(conn: psycopg.Connection, active_only: bool = True) -> li
     where = "WHERE active" if active_only else ""
     return _all(
         conn,
-        f"SELECT id, name, email, active FROM collaborators {where} ORDER BY active DESC, name",
+        f"SELECT id, name, email, active, payout_name FROM collaborators {where} ORDER BY active DESC, name",
     )
 
 
 def get_collaborator(conn: psycopg.Connection, collaborator_id: int) -> dict[str, Any] | None:
     return _one(
-        conn, "SELECT id, name, email, active FROM collaborators WHERE id = %s", (collaborator_id,)
+        conn,
+        "SELECT id, name, email, active, payout_name FROM collaborators WHERE id = %s",
+        (collaborator_id,),
     )
 
 
-def create_collaborator(conn: psycopg.Connection, name: str, email: str) -> int:
+def create_collaborator(
+    conn: psycopg.Connection, name: str, email: str, payout_name: str | None = None
+) -> int:
     try:
         row = _one(
             conn,
-            "INSERT INTO collaborators (name, email) VALUES (%s, %s) RETURNING id",
-            (name, email),
+            "INSERT INTO collaborators (name, email, payout_name) VALUES (%s, %s, %s) RETURNING id",
+            (name, email, payout_name),
         )
     except psycopg.errors.UniqueViolation as exc:
         raise DuplicateEmail(email) from exc
@@ -108,13 +112,15 @@ def create_collaborator(conn: psycopg.Connection, name: str, email: str) -> int:
     return row["id"]
 
 
-def update_collaborator(conn: psycopg.Connection, collaborator_id: int, name: str, email: str) -> None:
+def update_collaborator(
+    conn: psycopg.Connection, collaborator_id: int, name: str, email: str, payout_name: str | None = None
+) -> None:
     """Receipts already sent keep the name/email they were issued to
     (services.receipt_to_*); only future receipts use the new values."""
     try:
         conn.execute(
-            "UPDATE collaborators SET name = %s, email = %s WHERE id = %s",
-            (name, email, collaborator_id),
+            "UPDATE collaborators SET name = %s, email = %s, payout_name = %s WHERE id = %s",
+            (name, email, payout_name, collaborator_id),
         )
     except psycopg.errors.UniqueViolation as exc:
         raise DuplicateEmail(email) from exc

@@ -16,6 +16,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
 import psycopg
@@ -30,7 +31,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from lib import db, ledger
+from lib import db, ledger, payments
 from lib.auth import verify_password
 from lib.config import Config, ConfigError, get_config
 from lib.pipeline import Senders, ServiceBusy, default_senders, process_service
@@ -463,6 +464,119 @@ def create_app(config: Config | None = None, senders: Senders | None = None) -> 
             },
         )
 
+    # --- payments ---------------------------------------------------------------
+
+    _KINDS = {"cliente": "client", "colaborador": "collaborator"}
+
+    def events(c: psycopg.Connection, where: str, limit: int) -> list[dict[str, Any]]:
+        return payments.query(
+            c,
+            "SELECT e.*, COALESCE(json_agg(json_build_object('id', s.id, 'client_name', s.client_name, "
+            "'job', s.job) ORDER BY s.service_date) FILTER (WHERE s.id IS NOT NULL), '[]') AS services "
+            "FROM payment_events e LEFT JOIN payment_allocations a ON a.payment_id = e.id "
+            f"LEFT JOIN services s ON s.id = a.service_id WHERE {where} "
+            "GROUP BY e.id ORDER BY e.occurred_on DESC, e.id DESC LIMIT %s",
+            (limit,),
+        )
+
+    @app.get("/pagos")
+    def payments_page(request: Request):
+        require_login(request)
+        with conn() as c:
+            to_collect = payments.pending_client_services(c)
+            to_pay = payments.pending_collaborator_services(c)
+            by_collaborator: dict[str, list[dict[str, Any]]] = {}
+            for s in to_pay:
+                by_collaborator.setdefault(s["collaborator_name"], []).append(s)
+            last_sync = payments.query(c, "SELECT * FROM sync_runs ORDER BY id DESC LIMIT 1")
+            to_confirm = events(c, "e.status = 'pending'", 100)
+            ignored = events(
+                c, f"e.status = 'ignored' AND COALESCE(e.note, '') <> '{payments.OWN_MOVEMENT}'", 40
+            )
+            for e in to_confirm + ignored:
+                # Same amount first, then oldest; a known collaborator's own only.
+                if e["source"] == "bn_statement":
+                    pool, field = to_collect, "price"
+                else:
+                    pool = [s for s in to_pay if e["collaborator_id"] in (None, s["collaborator_id"])]
+                    field = "collaborator_pay"
+                e["candidates"] = sorted(
+                    pool, key=lambda s: (s[field] != e["amount"], s["service_date"], s["id"])
+                )
+                e["field"] = field
+            return render(
+                request,
+                "payments.html",
+                to_collect=to_collect,
+                to_collect_total=sum(s["price"] for s in to_collect),
+                by_collaborator=by_collaborator,
+                to_pay_total=sum(s["collaborator_pay"] for s in to_pay),
+                to_confirm=to_confirm,
+                ignored=ignored,
+                recent=events(c, "e.status = 'matched'", 30),
+                last_sync=last_sync[0] if last_sync else None,
+            )
+
+    @app.post("/pagos/servicios/{service_id}/{who}/{state}")
+    async def set_paid(request: Request, service_id: int, who: str, state: str):
+        require_login(request)
+        kind = _KINDS.get(who)
+        if kind is None or state not in ("pagado", "pendiente"):
+            return HTMLResponse("Acción inválida.", status_code=404)
+        if await checked_form(request) is None:
+            return forbidden()
+        with conn() as c:
+            if db.get_service(c, service_id) is None:
+                return HTMLResponse("No existe ese servicio.", status_code=404)
+            if state == "pagado":
+                payments.mark_paid_by_hand(c, service_id, kind, today())
+            else:
+                payments.unallocate(c, service_id, kind)
+        # Back to the page the button was on; only our own paths, never a full URL.
+        back = urlparse(request.headers.get("referer") or "").path
+        if back not in ("/pagos", f"/servicios/{service_id}"):
+            back = f"/servicios/{service_id}"
+        return RedirectResponse(back, status_code=303)
+
+    @app.post("/pagos/movimientos/{event_id}/asignar")
+    async def assign_payment(request: Request, event_id: int):
+        require_login(request)
+        form = await checked_form(request)
+        if form is None:
+            return forbidden()
+        try:
+            service_ids = sorted({int(x) for x in form.getlist("service_id")})
+        except ValueError:
+            return HTMLResponse("Servicio inválido.", status_code=400)
+        if not service_ids:
+            return HTMLResponse("Elige al menos un servicio.", status_code=400)
+        with conn() as c:
+            [event] = payments.query(c, "SELECT * FROM payment_events WHERE id = %s", (event_id,)) or [None]
+            if event is None or event["status"] == "matched":
+                return HTMLResponse("Ese movimiento no existe o ya está asignado.", status_code=404)
+            kind = "client" if event["source"] == "bn_statement" else "collaborator"
+            pending = (
+                payments.pending_client_services(c)
+                if kind == "client"
+                else payments.pending_collaborator_services(c)
+            )
+            chosen = [s for s in pending if s["id"] in service_ids]
+            if len(chosen) != len(service_ids):
+                return HTMLResponse("Algún servicio ya no está pendiente.", status_code=400)
+            payments.allocate(c, event_id, service_ids, kind, auto=False)
+            if kind == "client" and form.get("remember") and len({s["client_name"] for s in chosen}) == 1:
+                payments.remember_alias(c, event["counterparty"], chosen[0]["client_name"])
+        return RedirectResponse("/pagos", status_code=303)
+
+    @app.post("/pagos/movimientos/{event_id}/ignorar")
+    async def ignore_payment(request: Request, event_id: int):
+        require_login(request)
+        if await checked_form(request) is None:
+            return forbidden()
+        with conn() as c:
+            payments.ignore_by_hand(c, event_id)
+        return RedirectResponse("/pagos", status_code=303)
+
     # --- collaborators ---------------------------------------------------------
 
     @app.get("/colaboradores")
@@ -497,12 +611,12 @@ def create_app(config: Config | None = None, senders: Senders | None = None) -> 
         form = await checked_form(request)
         if form is None:
             return forbidden()
-        fields = {k: str(form.get(k, "")) for k in ("name", "email")}
-        name, email, errors = parse_collaborator_form(fields)
+        fields = {k: str(form.get(k, "")) for k in ("name", "email", "payout_name")}
+        name, email, payout_name, errors = parse_collaborator_form(fields)
         if not errors:
             with conn() as c:
                 try:
-                    db.create_collaborator(c, name, email)
+                    db.create_collaborator(c, name, email, payout_name)
                 except db.DuplicateEmail:
                     errors = ["Ya hay un colaborador con ese correo."]
         if errors:
@@ -529,15 +643,15 @@ def create_app(config: Config | None = None, senders: Senders | None = None) -> 
         form = await checked_form(request)
         if form is None:
             return forbidden()
-        fields = {k: str(form.get(k, "")) for k in ("name", "email")}
-        name, email, errors = parse_collaborator_form(fields)
+        fields = {k: str(form.get(k, "")) for k in ("name", "email", "payout_name")}
+        name, email, payout_name, errors = parse_collaborator_form(fields)
         with conn() as c:
             collaborator = db.get_collaborator(c, collaborator_id)
             if collaborator is None:
                 return HTMLResponse("No existe ese colaborador.", status_code=404)
             if not errors:
                 try:
-                    db.update_collaborator(c, collaborator_id, name, email)
+                    db.update_collaborator(c, collaborator_id, name, email, payout_name)
                 except db.DuplicateEmail:
                     errors = ["Ya hay un colaborador con ese correo."]
         if errors:

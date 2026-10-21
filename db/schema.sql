@@ -77,6 +77,65 @@ CREATE TABLE IF NOT EXISTS counters (
   last_value INT NOT NULL CHECK (last_value >= 0)
 );
 
+-- --- Payment tracking (see lib/payments.py) --------------------------------
+-- Only web app services (source = 'app') are tracked; the services imported
+-- from the old workbook were already settled.
+
+ALTER TABLE services ADD COLUMN IF NOT EXISTS client_paid_on DATE;
+ALTER TABLE services ADD COLUMN IF NOT EXISTS collaborator_paid_on DATE;
+
+-- Name as it shows up in SINPE / Wink transfers (e.g. "Angel Eduardo Fallas
+-- Valverde"), used to recognize payouts to this collaborator.
+ALTER TABLE collaborators ADD COLUMN IF NOT EXISTS payout_name TEXT;
+
+-- One money movement read from email: a credit on a BN statement (a client
+-- paying) or a Wink "Notificación de envío" (paying a collaborator).
+CREATE TABLE IF NOT EXISTS payment_events (
+  id            SERIAL PRIMARY KEY,
+  source        TEXT NOT NULL CHECK (source IN ('bn_statement', 'wink_send')),
+  occurred_on   DATE NOT NULL,
+  amount        NUMERIC(12, 2) NOT NULL CHECK (amount > 0),
+  counterparty  TEXT NOT NULL,           -- payer (BN) or recipient (Wink), as written there
+  description   TEXT,
+  external_ref  TEXT NOT NULL,           -- statement movement / email Message-ID
+  status        TEXT NOT NULL DEFAULT 'pending'
+                CHECK (status IN ('matched', 'pending', 'ignored')),
+  note          TEXT,                    -- why it's pending/ignored
+  collaborator_id INT REFERENCES collaborators (id),
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (source, external_ref)
+);
+CREATE INDEX IF NOT EXISTS payment_events_status_idx ON payment_events (status);
+
+CREATE TABLE IF NOT EXISTS payment_allocations (
+  payment_id INT NOT NULL REFERENCES payment_events (id) ON DELETE CASCADE,
+  service_id INT NOT NULL REFERENCES services (id),
+  kind       TEXT NOT NULL CHECK (kind IN ('client', 'collaborator')),
+  amount     NUMERIC(12, 2) NOT NULL,
+  auto       BOOLEAN NOT NULL,
+  PRIMARY KEY (payment_id, service_id, kind)
+);
+
+-- A payer name confirmed once ("VILLALOBOS CALVO ILE" pays for client X) is
+-- remembered for the next statement.
+CREATE TABLE IF NOT EXISTS payer_aliases (
+  payer_key  TEXT PRIMARY KEY,           -- normalized payer name from the statement
+  client_key TEXT NOT NULL,              -- lib.ledger.client_key of the client name
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Emails already read, so each one is parsed once; plus the last sync time.
+CREATE TABLE IF NOT EXISTS mail_processed (
+  message_id   TEXT PRIMARY KEY,
+  kind         TEXT NOT NULL,
+  processed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS sync_runs (
+  id          SERIAL PRIMARY KEY,
+  finished_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  summary     TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS login_attempts (
   ip      TEXT NOT NULL,
   at      TIMESTAMPTZ NOT NULL DEFAULT now(),

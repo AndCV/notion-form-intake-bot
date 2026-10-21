@@ -9,7 +9,7 @@
   <div class="item" style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--line)">
     <div>
       <strong>{{ c.name }}</strong> {% if not c.active %}<span class="pill">inactivo</span>{% endif %}
-      <div class="meta">{{ c.email }}</div>
+      <div class="meta">{{ c.email }}{% if c.payout_name %} · SINPE: {{ c.payout_name }}{% else %} · <span class="bad">sin nombre SINPE</span>{% endif %}</div>
     </div>
     <div style="display:flex;gap:6px">
       <a class="btn secondary small" href="/colaboradores/{{ c.id }}/editar">Editar</a>

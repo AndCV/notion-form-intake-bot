@@ -627,3 +627,132 @@ def test_summary_and_export_reflect_services_and_skip_deleted(client):
     assert "Cliente Borrado" not in text
     sheets = {line.split(",", 1)[0] for line in text.lstrip("\ufeff").splitlines()}
     assert "II Cuatrimestre" not in sheets and "III Cuatrimestre,,,Total,40000,35000" in text
+
+
+# --- payments (BN statement / Wink) ---------------------------------------------------
+
+from lib import payments as pay  # noqa: E402
+from lib.payment_mail import Movement  # noqa: E402
+
+
+def _ingest(source, payer, amount, on=date(2026, 10, 25), owner="ANDRES DAVID CUBILLO VILLALOBOS", ref=None):
+    with db.connect(TEST_DB, autocommit=True) as conn:
+        m = Movement(source, on, Decimal(amount), payer, "TRANSFERENCIA SINPE", ref or f"{payer}{amount}{on}")
+        pay.ingest(conn, m, owner)
+        return pay.rematch(conn)
+
+
+def test_statement_credit_with_matching_name_and_amount_marks_the_client_paid(client):
+    """protects: end to end -- a BN credit from the client for the stored price marks the
+    service paid on the transfer date and shows under "Pagos registrados";
+    fails_when: it stays pending, pays the wrong service, or the page doesn't show it;
+    no_claim: the Gmail/PDF reading is covered in test_payments.py."""
+    _login(client)
+    sid = _service_id(_create(client, client_name="Catalina", price="7000"))
+    _create(client, client_name="Jimena", price="7000")
+
+    assert _ingest("bn_statement", "ANA CATALINA RODRIGU", 7000) == {"matched": 1, "pending": 0, "ignored": 0}
+
+    [row] = _rows("SELECT client_paid_on FROM services WHERE id = %s", (sid,))
+    assert row["client_paid_on"] == date(2026, 10, 25)
+    html = client.get("/pagos").text
+    assert "ANA CATALINA RODRIGU" in html and "₡7.000" in html
+    assert "Por cobrar (1)" in html  # Jimena still owes
+    assert "Pagado el 25/10/2026" in client.get(f"/servicios/{sid}").text
+
+
+def test_amount_without_name_waits_for_confirmation_and_assigning_remembers_the_payer(client):
+    """protects: amount-only coincidences are never auto-paid; confirming one pays it and
+    teaches the app that payer, so the next statement matches alone;
+    fails_when: it's auto-paid, or the alias isn't reused;
+    no_claim: none beyond protects."""
+    _login(client)
+    sid = _service_id(_create(client, client_name="Jimena", price="12000"))
+    assert _ingest("bn_statement", "PEREZ SOLANO MARIA", 12000)["pending"] == 1
+    [event] = _rows("SELECT id FROM payment_events WHERE status = 'pending'")
+    html = client.get("/pagos").text
+    assert "Por confirmar (1)" in html and "nombre no" in html
+
+    client.post(f"/pagos/movimientos/{event['id']}/asignar",
+                data={"csrf": _csrf(client, "/pagos"), "service_id": str(sid), "remember": "1"})  # fmt: skip
+
+    assert _rows("SELECT client_paid_on FROM services WHERE id = %s", (sid,))[0]["client_paid_on"]
+    sid2 = _service_id(_create(client, client_name="Jimena", job="Otro", price="8000"))
+    assert _ingest("bn_statement", "PEREZ SOLANO MARIA", 8000, ref="second")["matched"] == 1
+    assert _rows("SELECT client_paid_on FROM services WHERE id = %s", (sid2,))[0]["client_paid_on"]
+
+
+def test_own_and_ignored_movements_stay_out(client):
+    """protects: the owner's own transfers and movements ignored by hand are never
+    matched later, even when a service with that amount appears;
+    fails_when: a later sync marks a service paid from them;
+    no_claim: none beyond protects."""
+    _login(client)
+    _ingest("bn_statement", "CUBILLO VILLALOBOS A", 5000, ref="own")
+    _ingest("bn_statement", "ALGUIEN MAS", 6000, ref="x")
+    [stranger] = _rows("SELECT id FROM payment_events WHERE counterparty = 'ALGUIEN MAS'")
+    client.post(f"/pagos/movimientos/{stranger['id']}/ignorar", data={"csrf": _csrf(client, "/pagos")})
+    _create(client, client_name="Cubillo", price="5000")
+    _create(client, client_name="Alguien", price="6000")
+
+    with db.connect(TEST_DB, autocommit=True) as conn:
+        assert pay.rematch(conn)["matched"] == 0
+    assert _rows("SELECT count(*) AS n FROM services WHERE client_paid_on IS NOT NULL")[0]["n"] == 0
+
+
+def test_wink_send_pays_the_collaborator_and_unmarking_returns_it_to_confirm(client):
+    """protects: a Wink send to the collaborator's SINPE name marks their pay as paid;
+    undoing it puts the movement back in "Por confirmar";
+    fails_when: the payout isn't recognized or the undo loses the movement;
+    no_claim: none beyond protects."""
+    _login(client)
+    with db.connect(TEST_DB, autocommit=True) as conn:
+        conn.execute("UPDATE collaborators SET payout_name = 'Angel Eduardo Fallas Valverde' WHERE id = 1")
+    sid = _service_id(_create(client, hire="1", collaborator_id="1", collaborator_pay="15000"))
+    assert "Colaborador Uno" in client.get("/pagos").text  # owed
+
+    assert _ingest("wink_send", "ANGEL EDUARDO FALLAS", 15000)["matched"] == 1
+    assert _rows("SELECT collaborator_paid_on FROM services WHERE id = %s", (sid,))[0]["collaborator_paid_on"]
+    assert "No le debes nada" in client.get("/pagos").text
+
+    client.post(f"/pagos/servicios/{sid}/colaborador/pendiente", data={"csrf": _csrf(client, f"/servicios/{sid}")})
+    assert _rows("SELECT collaborator_paid_on FROM services WHERE id = %s", (sid,))[0]["collaborator_paid_on"] is None
+    assert _rows("SELECT status FROM payment_events")[0]["status"] == "pending"
+
+
+def test_mark_paid_by_hand_and_imported_services_are_never_owed(client):
+    """protects: "Marcar pagado" works without any email; services imported from the
+    workbook never show as owed;
+    fails_when: the button does nothing or old services appear in "Por cobrar";
+    no_claim: none beyond protects."""
+    _login(client)
+    with db.connect(TEST_DB, autocommit=True) as conn:
+        conn.execute("INSERT INTO services (service_date, client_name, job, price, source) "
+                     "VALUES ('2026-09-01', 'Viejo', 'Excel', 9000, 'import')")  # fmt: skip
+    sid = _service_id(_create(client, client_name="Nuevo", price="4000"))
+    assert "Viejo" not in client.get("/pagos").text and "Nuevo" in client.get("/pagos").text
+
+    r = client.post(f"/pagos/servicios/{sid}/cliente/pagado", data={"csrf": _csrf(client, "/pagos")},
+                    headers={"referer": "https://evil.example/x"}, follow_redirects=False)  # fmt: skip
+
+    assert r.headers["location"] == f"/servicios/{sid}"
+    assert _rows("SELECT client_paid_on FROM services WHERE id = %s", (sid,))[0]["client_paid_on"]
+    assert "Nadie te debe" in client.get("/pagos").text
+
+
+def test_payments_page_requires_login(client):
+    """protects: payment data is private;
+    fails_when: /pagos answers without a session;
+    no_claim: none beyond protects."""
+    assert client.get("/pagos", follow_redirects=False).headers["location"] == "/login"
+
+
+def test_collaborator_payout_name_is_saved(client):
+    """protects: the SINPE/Wink name used to recognize payouts can be set in the form;
+    fails_when: it isn't stored;
+    no_claim: none beyond protects."""
+    _login(client)
+    client.post("/colaboradores/1/editar", data={"csrf": _csrf(client, "/colaboradores/1/editar"),
+                "name": "Colaborador Uno", "email": "uno@example.com", "payout_name": " Angel  Eduardo Fallas "})  # fmt: skip
+
+    assert _rows("SELECT payout_name FROM collaborators WHERE id = 1")[0]["payout_name"] == "Angel Eduardo Fallas"

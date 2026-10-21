@@ -43,16 +43,20 @@ class FormResult:
     errors: list[str] = field(default_factory=list)
 
 
-def parse_collaborator_form(fields: dict[str, str]) -> tuple[str, str, list[str]]:
-    """Returns (name, email, errors) for the add/edit collaborator form."""
+def parse_collaborator_form(fields: dict[str, str]) -> tuple[str, str, str | None, list[str]]:
+    """Returns (name, email, payout_name, errors) for the collaborator form.
+    payout_name is the name as SINPE/Wink shows it; optional."""
     name = (fields.get("name") or "").strip()
     email = (fields.get("email") or "").strip().lower()
+    payout_name = " ".join((fields.get("payout_name") or "").split()) or None
     errors = []
     if not name:
         errors.append("Falta el nombre.")
     if not _EMAIL_RE.match(email):
         errors.append("El correo no es válido.")
-    return name, email, errors
+    if payout_name and len(payout_name.split()) < 2:
+        errors.append("El nombre en SINPE/Wink debe tener al menos nombre y apellido.")
+    return name, email, payout_name, errors
 
 
 def _amount(raw: str) -> Decimal | None:

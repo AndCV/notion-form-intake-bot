@@ -27,6 +27,20 @@
 </div>
 
 {% if s.source == "app" %}
+<h2>Pagos</h2>
+<div class="card">
+  {% for who, label, paid_on, amount in [("cliente", "Cobro al cliente", s.client_paid_on, s.price)] + ([("colaborador", "Pago a " ~ (s.collaborator_name or "colaborador"), s.collaborator_paid_on, s.collaborator_pay)] if s.collaborator_id and s.collaborator_pay > 0 else []) %}
+  <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin:6px 0">
+    <div>{{ "✅" if paid_on else "⏳" }} {{ label }} · {{ amount | money }}
+      <div class="meta muted">{{ "Pagado el " ~ (paid_on | dmy) if paid_on else "Pendiente" }}</div></div>
+    <form method="post" action="/pagos/servicios/{{ s.id }}/{{ who }}/{{ 'pendiente' if paid_on else 'pagado' }}" style="margin:0">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button class="btn secondary small" type="submit">{{ "Marcar pendiente" if paid_on else "Marcar pagado" }}</button>
+    </form>
+  </div>
+  {% endfor %}
+</div>
+
 <h2>Envíos</h2>
 <div class="card">
   <ul class="steps">

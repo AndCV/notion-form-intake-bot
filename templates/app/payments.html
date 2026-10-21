@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block title %}Pagos{% endblock %}
+
+{% macro event_form(e) %}
+<form method="post" action="/pagos/movimientos/{{ e.id }}/asignar" class="assign">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  {% for s in e.candidates[:8] %}
+  <label class="check" style="margin:6px 0;font-weight:400">
+    <input type="checkbox" name="service_id" value="{{ s.id }}">
+    {{ s.client_name }} · {{ s.job }} · {{ s.service_date | dmy }} ·
+    <strong {% if s[e.field] == e.amount %}class="ok"{% endif %}>{{ s[e.field] | money }}</strong>
+    {% if s.collaborator_name %}<span class="muted">({{ s.collaborator_name }})</span>{% endif %}
+  </label>
+  {% else %}
+  <p class="muted">No hay servicios pendientes para asignar.</p>
+  {% endfor %}
+  {% if e.candidates %}
+  {% if e.source == "bn_statement" %}
+  <label class="check" style="font-weight:400;font-size:14px"><input type="checkbox" name="remember" value="1" checked> Recordar que «{{ e.counterparty }}» paga por este cliente</label>
+  {% endif %}
+  <button class="btn small" type="submit">Asignar</button>
+  {% endif %}
+</form>
+{% endmacro %}
+
+{% block content %}
+<h1>Pagos</h1>
+<p class="muted" style="margin-top:-8px">
+  Se leen de tu Gmail: el estado de cuenta del Banco Nacional (cobros, una vez al mes) y los envíos de Wink (pagos a colaboradores).
+  {% if last_sync %}Última revisión: {{ last_sync.finished_at | dmy }}.{% else %}Todavía no se ha revisado el correo.{% endif %}
+</p>
+
+<div class="stats" style="grid-template-columns:1fr 1fr">
+  <div class="stat"><b>{{ to_collect_total | money }}</b><span>Por cobrar ({{ to_collect | length }})</span></div>
+  <div class="stat"><b>{{ to_pay_total | money }}</b><span>Por pagar a colaboradores</span></div>
+</div>
+
+{% if to_confirm %}
+<h2>Por confirmar ({{ to_confirm | length }})</h2>
+{% for e in to_confirm %}
+<div class="card">
+  <div style="display:flex;justify-content:space-between;gap:10px">
+    <div>
+      <strong>{{ e.counterparty }}</strong>
+      <div class="meta muted">{{ "Estado de cuenta BN" if e.source == "bn_statement" else "Wink" }} · {{ e.occurred_on | dmy }}{% if e.description %} · {{ e.description }}{% endif %}</div>
+    </div>
+    <strong>{{ e.amount | money }}</strong>
+  </div>
+  {% if e.note %}<p class="muted" style="margin:6px 0">{{ e.note }}</p>{% endif %}
+  {{ event_form(e) }}
+  <form method="post" action="/pagos/movimientos/{{ e.id }}/ignorar" style="margin-top:6px">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button class="btn secondary small" type="submit">No es un pago de servicio</button>
+  </form>
+</div>
+{% endfor %}
+{% endif %}
+
+<h2>Por cobrar</h2>
+<div class="card list" style="padding:0">
+  {% for s in to_collect %}
+  <div class="item" style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--line)">
+    <a href="/servicios/{{ s.id }}" style="color:inherit;text-decoration:none">
+      <strong>{{ s.client_name }}</strong> <span class="muted">· {{ s.job }}</span>
+      <div class="meta">{{ s.service_date | dmy }} · {{ s.price | money }}</div>
+    </a>
+    <form method="post" action="/pagos/servicios/{{ s.id }}/cliente/pagado" style="margin:0">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button class="btn secondary small" type="submit">Marcar pagado</button>
+    </form>
+  </div>
+  {% else %}
+  <p class="muted" style="padding:14px;margin:0">Nadie te debe. 🎉</p>
+  {% endfor %}
+</div>
+
+<h2>Por pagar a colaboradores</h2>
+{% for name, items in by_collaborator.items() %}
+<div class="card list" style="padding:0">
+  <div style="padding:10px 14px;border-bottom:1px solid var(--line)"><strong>{{ name }}</strong> · {{ items | sum(attribute="collaborator_pay") | money }}</div>
+  {% for s in items %}
+  <div class="item" style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--line)">
+    <a href="/servicios/{{ s.id }}" style="color:inherit;text-decoration:none">
+      {{ s.client_name }} <span class="muted">· {{ s.job }}</span>
+      <div class="meta">{{ s.service_date | dmy }} · {{ s.collaborator_pay | money }}</div>
+    </a>
+    <form method="post" action="/pagos/servicios/{{ s.id }}/colaborador/pagado" style="margin:0">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button class="btn secondary small" type="submit">Marcar pagado</button>
+    </form>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<p class="muted">No le debes nada a ningún colaborador.</p>
+{% endfor %}
+
+<h2>Pagos registrados</h2>
+<div class="card list" style="padding:0">
+  {% for e in recent %}
+  <div class="item" style="display:flex;justify-content:space-between;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line)">
+    <div>
+      {{ "Cobro" if e.source == "bn_statement" else "Pago" }} · <strong>{{ e.counterparty }}</strong>
+      <div class="meta">{{ e.occurred_on | dmy }} · {% for s in e.services %}<a href="/servicios/{{ s.id }}">{{ s.client_name }} ({{ s.job }})</a>{{ ", " if not loop.last }}{% endfor %}</div>
+    </div>
+    <strong>{{ e.amount | money }}</strong>
+  </div>
+  {% else %}
+  <p class="muted" style="padding:14px;margin:0">Todavía no hay pagos registrados desde los correos.</p>
+  {% endfor %}
+</div>
+
+{% if ignored %}
+<details style="margin-top:14px">
+  <summary class="muted">Movimientos que no se asociaron a ningún servicio ({{ ignored | length }})</summary>
+  {% for e in ignored %}
+  <div class="card" style="margin-top:8px">
+    <div style="display:flex;justify-content:space-between;gap:10px">
+      <div><strong>{{ e.counterparty }}</strong>
+        <div class="meta muted">{{ e.occurred_on | dmy }} · {{ e.note }}</div></div>
+      <strong>{{ e.amount | money }}</strong>
+    </div>
+    {% if e.candidates %}<details><summary class="muted">Asignar a un servicio</summary>{{ event_form(e) }}</details>{% endif %}
+  </div>
+  {% endfor %}
+</details>
+{% endif %}
+{% endblock %}

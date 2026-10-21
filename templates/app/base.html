@@ -90,6 +90,7 @@
     <a href="/" class="brand">{{ mark(30) }}<span>{{ brand_name }}</span></a>
     {% if request.session.get("auth") %}
     <nav>
+      <a href="/pagos">Pagos</a>
       <a href="/resumen">Resumen</a>
       <a href="/colaboradores">Colaboradores</a>
       <form method="post" action="/logout">

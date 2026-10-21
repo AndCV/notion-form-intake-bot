@@ -1,0 +1,50 @@
+name: Read payment emails
+
+# Hourly: reads the Banco Nacional statements and Wink transfer
+# notifications from the owner's Gmail (read-only) and matches them to
+# services. See scripts/sync_payments.py. Logs show totals only -- this
+# repo is public.
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch: {}
+
+# Never two at once: both would read the same emails.
+concurrency:
+  group: payments-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      # GitHub disables scheduled workflows after 60 days without repo
+      # activity. Re-enabling this one on every run resets that timer.
+      - run: gh api -X PUT repos/${{ github.repository }}/actions/workflows/payments.yml/enable
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      # The sync doesn't render PDFs, but requirements.txt pulls WeasyPrint.
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libpango-1.0-0 libpangocairo-1.0-0
+      - run: pip install -r requirements.txt
+
+      - run: python scripts/migrate.py && python scripts/sync_payments.py
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
