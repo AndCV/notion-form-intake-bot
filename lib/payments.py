@@ -13,8 +13,8 @@ Collaborators (Wink sends) -- the recipient name is matched to a
 collaborator's payout_name, then the amount to one pending service's pay,
 or to the oldest pending services adding up to it.
 
-Only web app services are tracked (source = 'app'): the services imported
-from the old workbook were already settled. Unmatched movements are
+Every service is tracked except those imported from the old workbook
+(source = 'import'), which were already settled. Unmatched movements are
 re-evaluated on every sync, since a service may be registered after it
 was paid.
 """
@@ -180,7 +180,7 @@ def pending_client_services(conn: psycopg.Connection) -> list[dict[str, Any]]:
     return query(
         conn,
         "SELECT id, service_date, client_name, job, price FROM services "
-        "WHERE source = 'app' AND deleted_at IS NULL AND client_paid_on IS NULL "
+        "WHERE source <> 'import' AND deleted_at IS NULL AND client_paid_on IS NULL "
         "ORDER BY service_date, id",
     )
 
@@ -190,7 +190,7 @@ def pending_collaborator_services(conn: psycopg.Connection) -> list[dict[str, An
         conn,
         "SELECT s.id, s.service_date, s.client_name, s.job, s.collaborator_id, s.collaborator_pay, "
         "c.name AS collaborator_name FROM services s JOIN collaborators c ON c.id = s.collaborator_id "
-        "WHERE s.source = 'app' AND s.deleted_at IS NULL AND s.collaborator_pay > 0 "
+        "WHERE s.source <> 'import' AND s.deleted_at IS NULL AND s.collaborator_pay > 0 "
         "AND s.collaborator_paid_on IS NULL ORDER BY s.service_date, s.id",
     )
 

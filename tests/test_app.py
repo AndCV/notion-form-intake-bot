@@ -756,3 +756,39 @@ def test_collaborator_payout_name_is_saved(client):
                 "name": "Colaborador Uno", "email": "uno@example.com", "payout_name": " Angel  Eduardo Fallas "})  # fmt: skip
 
     assert _rows("SELECT payout_name FROM collaborators WHERE id = 1")[0]["payout_name"] == "Angel Eduardo Fallas"
+
+
+def test_installable_on_a_phone(client):
+    """protects: the app can be added to a phone's home screen: manifest, icons and the
+    iPhone meta tags are served without a session and linked from every page;
+    fails_when: any of them 404s or requires login;
+    no_claim: how each phone's browser renders the install prompt is not tested."""
+    manifest = client.get("/manifest.webmanifest")
+    assert manifest.status_code == 200 and manifest.json()["display"] == "standalone"
+    for icon in manifest.json()["icons"]:
+        r = client.get(icon["src"])
+        assert r.status_code == 200 and r.headers["content-type"] == "image/png"
+    assert client.get("/static/apple-touch-icon.png").status_code == 200
+    page = client.get("/login").text
+    assert 'rel="manifest"' in page and 'rel="apple-touch-icon"' in page
+
+
+def test_notion_services_are_tracked_but_never_resent(client, fake):
+    """protects: a service added from the old Notion form shows in "Por cobrar" but the
+    app never sends its emails again, even on retry;
+    fails_when: retry emails the client or the service isn't owed;
+    no_claim: none beyond protects."""
+    _login(client)
+    with db.connect(TEST_DB, autocommit=True) as conn:
+        [row] = conn.execute(
+            "INSERT INTO services (service_date, client_name, job, kind, deadline, price, invoice_number, source) "
+            "VALUES ('2026-10-19', 'María Jesús', 'Examen', 'trabajo', '2026-10-24', 12000, '0000071', 'notion') RETURNING id"
+        ).fetchall()
+        conn.execute("INSERT INTO service_emails VALUES (%s, 'mj@example.com')", (row[0],))
+    sid = row[0]
+
+    assert "María Jesús" in client.get("/pagos").text
+    detail = client.get(f"/servicios/{sid}").text
+    assert "Reintentar" not in detail and "Notion" in detail
+    client.post(f"/servicios/{sid}/reintentar", data={"csrf": _csrf(client, f"/servicios/{sid}")})
+    assert fake.confirmations == [] and fake.invoices == [] and fake.calendar == []

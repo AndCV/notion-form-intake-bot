@@ -103,7 +103,8 @@ def process_service(
     problems: list[str] = []
     try:
         service = db.get_service(conn, service_id)
-        if service is None:
+        # Imported and Notion services had their emails sent elsewhere.
+        if service is None or service["source"] != "app":
             return problems
         submission = submission_from_service(service, config.timezone)
         now = lambda: datetime.now(dt_timezone.utc)  # noqa: E731

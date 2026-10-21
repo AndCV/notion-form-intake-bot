@@ -22,6 +22,7 @@ from zoneinfo import ZoneInfo
 import psycopg
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -38,6 +39,7 @@ from lib.pipeline import Senders, ServiceBusy, default_senders, process_service
 from lib.service_form import MAX_EMAILS, parse_collaborator_form, parse_service_form
 
 _TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates" / "app"
+_STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 MONTH_NAMES = [
     "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
@@ -180,6 +182,34 @@ def create_app(config: Config | None = None, senders: Senders | None = None) -> 
     @app.get("/healthz")
     def healthz() -> JSONResponse:
         return JSONResponse({"ok": True})
+
+    # Installable on a phone ("Agregar a pantalla de inicio"): opens full
+    # screen with its own icon. Icons and manifest are public; they hold
+    # nothing but the logo and the name.
+    app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
+
+    @app.get("/manifest.webmanifest")
+    def manifest() -> JSONResponse:
+        name = getattr(config, "invoice_issuer_name", "") or "Servicios"
+        return JSONResponse(
+            {
+                "name": name,
+                "short_name": "Servicios",
+                "start_url": "/",
+                "scope": "/",
+                "display": "standalone",
+                "background_color": "#F6F7FB",
+                "theme_color": "#0F226F",
+                "lang": "es",
+                "icons": [
+                    {"src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png"},
+                    {"src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png"},
+                    {"src": "/static/icon-maskable-512.png", "sizes": "512x512",
+                     "type": "image/png", "purpose": "maskable"},
+                ],
+            },
+            media_type="application/manifest+json",
+        )
 
     # --- login -------------------------------------------------------------
 

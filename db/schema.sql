@@ -77,9 +77,24 @@ CREATE TABLE IF NOT EXISTS counters (
   last_value INT NOT NULL CHECK (last_value >= 0)
 );
 
+-- 'notion': requests registered through the old Notion form, added by hand
+-- after the cutover. Their emails and invoices already went out, so the app
+-- never runs their steps, but their payments are tracked.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'services_source_check' AND pg_get_constraintdef(oid) LIKE '%notion%'
+  ) THEN
+    ALTER TABLE services DROP CONSTRAINT IF EXISTS services_source_check;
+    ALTER TABLE services ADD CONSTRAINT services_source_check
+      CHECK (source IN ('app', 'import', 'notion'));
+  END IF;
+END $$;
+
 -- --- Payment tracking (see lib/payments.py) --------------------------------
--- Only web app services (source = 'app') are tracked; the services imported
--- from the old workbook were already settled.
+-- Every service except the ones imported from the old workbook (already
+-- settled) is tracked.
 
 ALTER TABLE services ADD COLUMN IF NOT EXISTS client_paid_on DATE;
 ALTER TABLE services ADD COLUMN IF NOT EXISTS collaborator_paid_on DATE;

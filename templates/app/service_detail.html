@@ -26,7 +26,7 @@
   </dl>
 </div>
 
-{% if s.source == "app" %}
+{% if s.source != "import" %}
 <h2>Pagos</h2>
 <div class="card">
   {% for who, label, paid_on, amount in [("cliente", "Cobro al cliente", s.client_paid_on, s.price)] + ([("colaborador", "Pago a " ~ (s.collaborator_name or "colaborador"), s.collaborator_paid_on, s.collaborator_pay)] if s.collaborator_id and s.collaborator_pay > 0 else []) %}
@@ -40,7 +40,8 @@
   </div>
   {% endfor %}
 </div>
-
+{% endif %}
+{% if s.source == "app" %}
 <h2>Envíos</h2>
 <div class="card">
   <ul class="steps">
@@ -60,7 +61,7 @@
   {% endif %}
 </div>
 {% else %}
-<p class="muted">Importado de la hoja de ganancias.</p>
+<p class="muted">{{ "Registrado desde el formulario de Notion: su confirmación y su factura ya se habían enviado." if s.source == "notion" else "Importado de la hoja de ganancias." }}</p>
 {% endif %}
 
 <div class="row" style="margin-top:14px">
