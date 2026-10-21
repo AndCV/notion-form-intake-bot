@@ -118,9 +118,8 @@ def create_app(config: Config | None = None, senders: Senders | None = None) -> 
             request=request,
             csrf=csrf_token(request),
             max_emails=MAX_EMAILS,
-            # Same letterhead as the invoice (INVOICE_* settings).
+            # Same name as the invoice letterhead (INVOICE_ISSUER_NAME).
             brand_name=getattr(config, "invoice_issuer_name", "") or "Servicios",
-            brand_tagline=getattr(config, "invoice_tagline", ""),
         )
         return templates.TemplateResponse(request, name, ctx, status_code=status)
 

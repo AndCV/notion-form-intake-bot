@@ -57,7 +57,7 @@ class Config:
         self.class_duration_minutes = int(os.environ.get("CLASS_DURATION_MINUTES", "60"))
 
         # Invoice/receipt letterhead (see lib/invoicing.py, templates/invoice.html);
-        # also the web app's brand name and tagline.
+        # the issuer name also brands the web app.
         self.invoice_issuer_name = os.environ.get("INVOICE_ISSUER_NAME", "Your Name")
         self.invoice_tagline = os.environ.get("INVOICE_TAGLINE", "")
         self.invoice_phone = os.environ.get("INVOICE_PHONE", "")

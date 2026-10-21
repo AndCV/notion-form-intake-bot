@@ -22,7 +22,6 @@
   header a { color: #fff; text-decoration: none; font-weight: 600; }
   header .wrap { flex-wrap: wrap; row-gap: 10px; }
   header .brand { display: flex; align-items: center; gap: 10px; line-height: 1.15; white-space: nowrap; }
-  header .brand small { display: block; font-weight: 400; font-size: 11px; color: var(--teal); }
   header nav { display: flex; align-items: center; gap: 14px; margin-left: auto; }
   header nav a { font-weight: 400; font-size: 15px; }
   header nav form { margin: 0; flex: none; }
@@ -88,7 +87,7 @@
 <body>
 <header>
   <div class="wrap">
-    <a href="/" class="brand">{{ mark(30) }}<span>{{ brand_name }}<small>{{ brand_tagline }}</small></span></a>
+    <a href="/" class="brand">{{ mark(30) }}<span>{{ brand_name }}</span></a>
     {% if request.session.get("auth") %}
     <nav>
       <a href="/resumen">Resumen</a>

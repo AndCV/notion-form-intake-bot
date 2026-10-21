@@ -154,7 +154,7 @@ not per IP).
 ### Invoice letterhead
 
 The `INVOICE_*` variables set the issuer name, tagline, contact details,
-payment method and currency symbol. The issuer name and tagline also brand
+payment method and currency symbol. The issuer name also brands
 the web app. To tweak the design, edit `templates/invoice.html` and run
 `python scripts/generate_sample_invoice.py`.
 
