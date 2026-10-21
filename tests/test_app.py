@@ -792,3 +792,53 @@ def test_notion_services_are_tracked_but_never_resent(client, fake):
     assert "Reintentar" not in detail and "Notion" in detail
     client.post(f"/servicios/{sid}/reintentar", data={"csrf": _csrf(client, f"/servicios/{sid}")})
     assert fake.confirmations == [] and fake.invoices == [] and fake.calendar == []
+
+
+def test_form_offers_a_known_clients_latest_emails(client):
+    """protects: the form fills a client's email from their name -- a created
+    or edited service stores its emails for that client, the newest wins, and
+    accents/case/spaces don't split a client in two;
+    fails_when: the form lacks the client or shows stale emails;
+    no_claim: the browser-side fill itself (JavaScript, not run here)."""
+    _login(client)
+    _create(client, emails=("vieja@example.com",), client_name="María  José")
+    sid = _service_id(_create(client, emails=("nueva@example.com",), client_name="maria jose"))
+    _create(client, emails=("otra@example.com",), client_name="Otro Cliente")
+
+    rows = _rows("SELECT client_key, name, emails FROM client_contacts ORDER BY client_key")
+    assert [(r["client_key"], r["emails"]) for r in rows] == [
+        ("maria jose", ["nueva@example.com"]),
+        ("otro cliente", ["otra@example.com"]),
+    ]
+
+    data = _service_fields(client_name="Otro Cliente")
+    data |= {"csrf": _csrf(client, f"/servicios/{sid}/editar"), "emails": ["x@example.com", "y@example.com"]}
+    client.post(f"/servicios/{sid}/editar", data=data, follow_redirects=False)
+    [row] = _rows("SELECT emails FROM client_contacts WHERE client_key = 'otro cliente'")
+    assert row["emails"] == ["x@example.com", "y@example.com"]
+
+    html = client.get("/servicios/nuevo").text
+    assert '<option value="Otro Cliente">' in html
+    assert '"key": "otro cliente"' in html and "y@example.com" in html
+    assert "vieja@example.com" not in html
+
+
+def test_contacts_import_keeps_the_newest_entry(pg):
+    """protects: scripts/import_contacts.py -- an older Notion request never
+    overwrites a client's newer emails, and Spanish 'Creado' dates parse;
+    fails_when: the stored emails come from the older row;
+    no_claim: the real Notion export's columns (checked by hand)."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from lib import db
+    from scripts.import_contacts import parse_created
+
+    tz = "America/Costa_Rica"
+    assert parse_created("26 de julio de 2026 18:57", tz) == datetime(2026, 7, 26, 18, 57, tzinfo=ZoneInfo(tz))
+    assert parse_created("sin fecha", tz) is None
+    with db.connect(TEST_DB, autocommit=True) as conn:
+        db.remember_contact(conn, "Ana", ["nueva@example.com"], datetime(2026, 10, 1, tzinfo=ZoneInfo(tz)))
+        db.remember_contact(conn, "ANA", ["vieja@example.com"], parse_created("3 de agosto de 2026", tz))
+        db.remember_contact(conn, "Ana", [], None)
+        assert [(x["name"], x["emails"]) for x in db.list_contacts(conn)] == [("Ana", ["nueva@example.com"])]

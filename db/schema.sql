@@ -77,6 +77,16 @@ CREATE TABLE IF NOT EXISTS counters (
   last_value INT NOT NULL CHECK (last_value >= 0)
 );
 
+-- Latest emails used for each client, so the form fills them in from the
+-- name. Kept apart from service_emails so contacts from the old Notion form
+-- (scripts/import_contacts.py) count too.
+CREATE TABLE IF NOT EXISTS client_contacts (
+  client_key TEXT PRIMARY KEY,           -- lib.ledger.client_key of the name
+  name       TEXT NOT NULL,              -- as last written
+  emails     TEXT[] NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- 'notion': requests registered through the old Notion form, added by hand
 -- after the cutover. Their emails and invoices already went out, so the app
 -- never runs their steps, but their payments are tracked.

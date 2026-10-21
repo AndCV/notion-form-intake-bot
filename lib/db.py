@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import os
 import uuid
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 import psycopg
 from psycopg.rows import dict_row
 
+from .ledger import client_key
 from .service_form import ServiceInput
 
 # Columns the processing steps may stamp; anything else is refused so a
@@ -196,6 +197,7 @@ def create_service(conn: psycopg.Connection, data: ServiceInput, token: uuid.UUI
             ),
         )
         _replace_emails(conn, row["id"], data.emails)
+        remember_contact(conn, data.client_name, data.emails)
     return row["id"]
 
 
@@ -206,6 +208,30 @@ def _replace_emails(conn: psycopg.Connection, service_id: int, emails: list[str]
             "INSERT INTO service_emails (service_id, email) VALUES (%s, %s)",
             [(service_id, email) for email in emails],
         )
+
+
+def remember_contact(
+    conn: psycopg.Connection, name: str, emails: list[str], at: datetime | None = None
+) -> None:
+    """Stores these as the client's emails, unless a newer entry exists."""
+    key = client_key(name)
+    if not key or not emails:
+        return
+    conn.execute(
+        """
+        INSERT INTO client_contacts (client_key, name, emails, updated_at)
+        VALUES (%s, %s, %s, COALESCE(%s, now()))
+        ON CONFLICT (client_key) DO UPDATE
+          SET name = EXCLUDED.name, emails = EXCLUDED.emails, updated_at = EXCLUDED.updated_at
+          WHERE client_contacts.updated_at <= EXCLUDED.updated_at
+        """,
+        (key, name.strip(), list(emails), at),
+    )
+
+
+def list_contacts(conn: psycopg.Connection) -> list[dict[str, Any]]:
+    """Every known client with their latest emails, by name."""
+    return _all(conn, "SELECT client_key, name, emails FROM client_contacts ORDER BY name")
 
 
 def get_service(conn: psycopg.Connection, service_id: int) -> dict[str, Any] | None:
@@ -287,6 +313,7 @@ def update_service(conn: psycopg.Connection, service_id: int, data: ServiceInput
             ),
         )
         _replace_emails(conn, service_id, data.emails)
+        remember_contact(conn, data.client_name, data.emails)
 
 
 def soft_delete_service(conn: psycopg.Connection, service_id: int) -> None:

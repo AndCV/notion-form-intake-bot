@@ -59,6 +59,7 @@ templates/invoice.html       # invoice/receipt layout (shared letterhead)
 templates/app/               # web app pages
 scripts/migrate.py           # apply schema; seed a collaborator or the invoice counter
 scripts/import_2026.py       # one-time import of the 2026 workbook
+scripts/import_contacts.py   # loads client emails (Notion export) so the form fills them in
 scripts/hash_password.py     # turns APP_PASSWORD into APP_PASSWORD_HASH in .env
 scripts/sync_payments.py     # reads new payment emails and matches them (hourly)
 scripts/generate_sample_invoice.py  # sample invoice PDF, no external calls

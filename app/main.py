@@ -173,6 +173,10 @@ def create_app(config: Config | None = None, senders: Senders | None = None) -> 
             errors=errors,
             service=service,
             collaborators=db.list_collaborators(c),
+            contacts=[
+                {"key": x["client_key"], "name": x["name"], "emails": list(x["emails"])}
+                for x in db.list_contacts(c)
+            ],
         )
 
     @app.exception_handler(_LoginRequired)
