@@ -77,6 +77,11 @@ CREATE TABLE IF NOT EXISTS counters (
   last_value INT NOT NULL CHECK (last_value >= 0)
 );
 
+-- Every client's name when a service is for several people; client_name
+-- holds them joined ("Ana y Luis") for lists, the CSV and the invoice.
+-- NULL on older rows: client_name is then the only name.
+ALTER TABLE services ADD COLUMN IF NOT EXISTS client_names TEXT[];
+
 -- Latest emails used for each client, so the form fills them in from the
 -- name. Kept apart from service_emails so contacts from the old Notion form
 -- (scripts/import_contacts.py) count too.

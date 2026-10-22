@@ -842,3 +842,36 @@ def test_contacts_import_keeps_the_newest_entry(pg):
         db.remember_contact(conn, "ANA", ["vieja@example.com"], parse_created("3 de agosto de 2026", tz))
         db.remember_contact(conn, "Ana", [], None)
         assert [(x["name"], x["emails"]) for x in db.list_contacts(conn)] == [("Ana", ["nueva@example.com"])]
+
+
+def test_a_service_for_several_people_greets_and_bills_them_all(client, fake):
+    """protects: two or more names, like two or more emails -- the emails and
+    invoice go to the joined names, the names survive the confirm page and
+    the edit form, and editing down to one name clears the list;
+    fails_when: a name is dropped anywhere along the way;
+    no_claim: the browser-side "+ Agregar nombre" button (JavaScript)."""
+    _login(client)
+    data = _service_fields(client_name="")
+    data |= {"csrf": _csrf(client, "/servicios/nuevo"), "emails": ["a@example.com", "b@example.com"],
+             "client_names": ["Ana Mora", "Luis Quesada"]}  # fmt: skip
+    confirm = client.post("/servicios/confirmar", data=data)
+    assert "Ana Mora y Luis Quesada" in confirm.text
+    hidden = re.findall(r'name="client_names" value="([^"]+)"', confirm.text)
+    assert hidden == ["Ana Mora", "Luis Quesada"]
+
+    data |= {"submission_token": str(uuid.uuid4())}
+    sid = _service_id(client.post("/servicios", data=data, follow_redirects=False))
+
+    [row] = _rows("SELECT client_name, client_names FROM services WHERE id = %s", (sid,))
+    assert (row["client_name"], row["client_names"]) == ("Ana Mora y Luis Quesada", ["Ana Mora", "Luis Quesada"])
+    assert fake.confirmations[0].name == "Ana Mora y Luis Quesada"
+    assert fake.invoices[0][0].name == "Ana Mora y Luis Quesada"
+    edit = client.get(f"/servicios/{sid}/editar").text
+    assert re.findall(r'name="client_names" type="text" value="([^"]*)"', edit) == ["Ana Mora", "Luis Quesada"]
+
+    data = _service_fields(client_name="")
+    data |= {"csrf": _csrf(client, f"/servicios/{sid}/editar"), "emails": ["a@example.com"],
+             "client_names": ["Ana Mora", ""]}  # fmt: skip
+    client.post(f"/servicios/{sid}/editar", data=data, follow_redirects=False)
+    [row] = _rows("SELECT client_name, client_names FROM services WHERE id = %s", (sid,))
+    assert (row["client_name"], row["client_names"]) == ("Ana Mora", None)

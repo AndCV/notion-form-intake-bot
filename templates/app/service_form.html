@@ -28,7 +28,13 @@
   </div>
 
   <label for="client_name">Cliente</label>
-  <input id="client_name" name="client_name" type="text" value="{{ fields.client_name or '' }}" list="known-clients" autocomplete="off" required>
+  <div id="names">
+    {% for n in names %}
+    <div class="email-row"><input {{ 'id=client_name' if loop.first }} name="client_names" type="text" value="{{ n }}" list="known-clients" autocomplete="off" {{ "required" if loop.first }}></div>
+    {% endfor %}
+  </div>
+  <button type="button" class="btn secondary small" id="add-name">+ Agregar nombre</button>
+  <span class="muted">Si el servicio es para varias personas. Máximo {{ max_names }}.</span>
   <datalist id="known-clients">
     {% for x in contacts %}<option value="{{ x.name }}"></option>{% endfor %}
   </datalist>
@@ -122,22 +128,46 @@
     addRow().focus();
   });
 
+  var namesBox = document.getElementById("names"), addName = document.getElementById("add-name");
+  addName.addEventListener("click", function () {
+    if (namesBox.querySelectorAll("input").length >= {{ max_names }}) return;
+    var row = document.createElement("div"); row.className = "email-row";
+    var input = document.createElement("input");
+    input.name = "client_names"; input.type = "text"; input.autocomplete = "off";
+    input.setAttribute("list", "known-clients");
+    row.appendChild(input); namesBox.appendChild(row); input.focus();
+  });
+
   // Known client -> their last emails. Fills the email boxes only while
   // they're empty or still hold what this script put there, so a typed
-  // email is never overwritten.
+  // email is never overwritten. Several names: the group's emails if it was
+  // seen before, else every known person's emails together.
   var contacts = {{ contacts|tojson }}, byKey = {};
   contacts.forEach(function (x) { byKey[x.key] = x.emails; });
   function key(s) {
     return s.normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase().split(/\s+/).filter(Boolean).join(" ");
   }
-  var nameInput = document.getElementById("client_name"), emailHint = document.getElementById("email-hint"),
-      filled = null;
+  function joinNames(n) {
+    return n.length <= 1 ? n.join("") : n.slice(0, -1).join(", ") + " y " + n[n.length - 1];
+  }
+  var emailHint = document.getElementById("email-hint"), filled = null;
   function current() {
     return Array.prototype.map.call(box.querySelectorAll("input"), function (i) { return i.value.trim(); })
       .filter(Boolean).join(",");
   }
+  function lookup() {
+    var names = Array.prototype.map.call(namesBox.querySelectorAll("input"), function (i) { return i.value.trim(); })
+      .filter(Boolean);
+    var group = byKey[key(joinNames(names))];
+    if (group) return group;
+    var all = [];
+    names.forEach(function (n) {
+      (byKey[key(n)] || []).forEach(function (e) { if (all.indexOf(e) < 0) all.push(e); });
+    });
+    return all.length ? all : null;
+  }
   function fillEmails() {
-    var found = byKey[key(nameInput.value)], now = current();
+    var found = lookup(), now = current();
     if (now && now !== filled) return;
     if (!found) {
       if (filled !== null) { box.innerHTML = ""; addRow().required = true; filled = null; emailHint.textContent = ""; }
@@ -148,8 +178,8 @@
     filled = current();
     emailHint.textContent = "(de su último servicio)";
   }
-  nameInput.addEventListener("input", fillEmails);
-  nameInput.addEventListener("change", fillEmails);
+  namesBox.addEventListener("input", fillEmails);
+  namesBox.addEventListener("change", fillEmails);
 })();
 </script>
 {% endblock %}

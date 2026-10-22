@@ -33,6 +33,7 @@
   <input type="hidden" name="submission_token" value="{{ token }}">
   {% for name, value in fields.items() %}<input type="hidden" name="{{ name }}" value="{{ value }}">{% endfor %}
   {% for e in emails %}<input type="hidden" name="emails" value="{{ e }}">{% endfor %}
+  {% for n in names %}<input type="hidden" name="client_names" value="{{ n }}">{% endfor %}
   <button class="btn block" type="submit">Confirmar y enviar</button>
 </form>
 <a class="btn secondary block" href="javascript:history.back()">Volver a editar</a>

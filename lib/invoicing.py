@@ -38,7 +38,6 @@ def render_invoice_html(
     template = _env.get_template("invoice.html")
     return template.render(
         issuer_name=config.invoice_issuer_name,
-        tagline=config.invoice_tagline,
         invoice_number=invoice_number,
         issue_date=issue_date.strftime("%d / %m / %Y"),
         client_name=submission.name,
@@ -78,7 +77,6 @@ def render_receipt_html(
         number_label="Recibo N.&ordm;:",
         terms=RECEIPT_TERMS,
         issuer_name=config.invoice_issuer_name,
-        tagline=config.invoice_tagline,
         invoice_number=receipt_number,
         issue_date=issue_date.strftime("%d / %m / %Y"),
         client_name=collaborator_name,

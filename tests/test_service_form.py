@@ -89,3 +89,22 @@ def test_rejections(fields, emails, message):
 
     assert result.value is None
     assert any(message in e for e in result.errors), result.errors
+
+
+def test_several_client_names_are_cleaned_and_joined():
+    """protects: a service for several people -- every name is kept in order,
+    blanks and repeats dropped, and they're joined for the invoice greeting;
+    fails_when: a name is lost, repeated, or joined differently;
+    no_claim: none beyond protects."""
+    result = parse_service_form(
+        _fields(client_name=""), ["a@example.com"], TZ, set(),
+        names=[" Ana  Mora ", "", "Luis", "ana mora", "Marta"],
+    )  # fmt: skip
+
+    assert result.errors == []
+    assert result.value.client_names == ["Ana Mora", "Luis", "Marta"]
+    assert result.value.client_name == "Ana Mora, Luis y Marta"
+    assert parse_service_form(_fields(), ["a@example.com"], TZ, set(), names=["", " "]).errors == [
+        "Falta el nombre del cliente."
+    ]
+    assert _parse().value.client_names == ["Cliente A"]

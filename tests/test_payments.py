@@ -161,3 +161,15 @@ def test_collaborator_payouts():
     odd = decide_collaborator(_send("ANGEL EDUARDO FALLAS", 7000), COLLABS, TO_PAY)
     assert odd.status == "pending" and odd.collaborator_id == 1
     assert decide_collaborator(_send("ANDRES DAVID CUBILLO", 2500), COLLABS, TO_PAY).status == "ignored"
+
+
+def test_any_of_several_names_can_pay_a_shared_service():
+    """protects: a service for "Ana y Luis" is paid when the statement shows
+    either person with the stored price;
+    fails_when: only the first name is recognized;
+    no_claim: none beyond protects."""
+    shared = dict(_svc(9, "Ana Mora y Luis Quesada", 20000), client_names=["Ana Mora", "Luis Quesada"])
+
+    assert decide_client(_credit("LUIS QUESADA SOTO", 20000), "", [shared], {}).service_ids == [9]
+    assert decide_client(_credit("ANA MORA VEGA", 20000), "", [shared], {}).service_ids == [9]
+    assert decide_client(_credit("PEDRO SOTO", 20000), "", [shared], {}).status == "pending"

@@ -36,7 +36,7 @@ from lib import db, ledger, payments
 from lib.auth import verify_password
 from lib.config import Config, ConfigError, get_config
 from lib.pipeline import Senders, ServiceBusy, default_senders, process_service
-from lib.service_form import MAX_EMAILS, parse_collaborator_form, parse_service_form
+from lib.service_form import MAX_EMAILS, MAX_NAMES, parse_collaborator_form, parse_service_form
 
 _TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates" / "app"
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -121,6 +121,7 @@ def create_app(config: Config | None = None, senders: Senders | None = None) -> 
             request=request,
             csrf=csrf_token(request),
             max_emails=MAX_EMAILS,
+            max_names=MAX_NAMES,
             # Same name as the invoice letterhead (INVOICE_ISSUER_NAME).
             brand_name=getattr(config, "invoice_issuer_name", "") or "Servicios",
         )
@@ -140,12 +141,14 @@ def create_app(config: Config | None = None, senders: Senders | None = None) -> 
     def forbidden() -> HTMLResponse:
         return HTMLResponse("Solicitud inválida (CSRF). Recarga la página.", status_code=403)
 
-    def form_values(form) -> tuple[dict[str, str], list[str]]:
+    def form_values(form) -> tuple[dict[str, str], list[str], list[str] | None]:
         fields = {name: str(form.get(name, "")) for name in _FORM_FIELDS}
         emails = [str(e) for e in form.getlist("emails")]
-        return fields, emails
+        # None when the form only sent the single "client_name" field.
+        names = [str(n) for n in form.getlist("client_names")] or None
+        return fields, emails, names
 
-    def service_values(service: dict[str, Any]) -> tuple[dict[str, str], list[str]]:
+    def service_values(service: dict[str, Any]) -> tuple[dict[str, str], list[str], list[str]]:
         scheduled = service["scheduled_at"]
         fields = {
             "service_date": service["service_date"].isoformat(),
@@ -160,9 +163,9 @@ def create_app(config: Config | None = None, senders: Senders | None = None) -> 
             "collaborator_id": str(service["collaborator_id"] or ""),
             "collaborator_pay": str(int(service["collaborator_pay"])),
         }
-        return fields, list(service["emails"])
+        return fields, list(service["emails"]), db.client_names(service)
 
-    def form_page(request, c, status, *, action, fields, emails, errors, service=None):
+    def form_page(request, c, status, *, action, fields, emails, errors, names=None, service=None):
         return render(
             request,
             "service_form.html",
@@ -170,6 +173,7 @@ def create_app(config: Config | None = None, senders: Senders | None = None) -> 
             action=action,
             fields=fields,
             emails=emails or [""],
+            names=names or [fields.get("client_name", "")],
             errors=errors,
             service=service,
             collaborators=db.list_collaborators(c),
@@ -302,16 +306,16 @@ def create_app(config: Config | None = None, senders: Senders | None = None) -> 
         form = await checked_form(request)
         if form is None:
             return forbidden()
-        fields, emails = form_values(form)
+        fields, emails, names = form_values(form)
         with conn() as c:
             collaborators = db.list_collaborators(c)
             result = parse_service_form(
-                fields, emails, config.timezone, {x["id"] for x in collaborators}
+                fields, emails, config.timezone, {x["id"] for x in collaborators}, names
             )
             if result.errors:
                 return form_page(
                     request, c, 400, action="/servicios/confirmar",
-                    fields=fields, emails=emails, errors=result.errors,
+                    fields=fields, emails=emails, names=names, errors=result.errors,
                 )  # fmt: skip
         collaborator = next(
             (x for x in collaborators if x["id"] == result.value.collaborator_id), None
@@ -322,6 +326,7 @@ def create_app(config: Config | None = None, senders: Senders | None = None) -> 
             data=result.value,
             fields=fields,
             emails=result.value.emails,
+            names=result.value.client_names,
             collaborator=collaborator,
             token=str(uuid.uuid4()),
         )
@@ -336,19 +341,19 @@ def create_app(config: Config | None = None, senders: Senders | None = None) -> 
             token = uuid.UUID(str(form.get("submission_token", "")))
         except ValueError:
             return HTMLResponse("Falta el identificador del envío.", status_code=400)
-        fields, emails = form_values(form)
+        fields, emails, names = form_values(form)
         with conn() as c:
             existing = db.find_service_by_token(c, token)
             if existing:
                 return RedirectResponse(f"/servicios/{existing}", status_code=303)
             collaborators = db.list_collaborators(c)
             result = parse_service_form(
-                fields, emails, config.timezone, {x["id"] for x in collaborators}
+                fields, emails, config.timezone, {x["id"] for x in collaborators}, names
             )
             if result.errors:
                 return form_page(
                     request, c, 400, action="/servicios/confirmar",
-                    fields=fields, emails=emails, errors=result.errors,
+                    fields=fields, emails=emails, names=names, errors=result.errors,
                 )  # fmt: skip
             try:
                 service_id = db.create_service(c, result.value, token)
@@ -397,10 +402,10 @@ def create_app(config: Config | None = None, senders: Senders | None = None) -> 
             service = db.get_service(c, service_id)
             if service is None:
                 return HTMLResponse("No existe ese servicio.", status_code=404)
-            fields, emails = service_values(service)
+            fields, emails, names = service_values(service)
             return form_page(
                 request, c, 200, action=f"/servicios/{service_id}/editar",
-                fields=fields, emails=emails, errors=[], service=service,
+                fields=fields, emails=emails, names=names, errors=[], service=service,
             )  # fmt: skip
 
     @app.post("/servicios/{service_id}/editar")
@@ -409,7 +414,7 @@ def create_app(config: Config | None = None, senders: Senders | None = None) -> 
         form = await checked_form(request)
         if form is None:
             return forbidden()
-        fields, emails = form_values(form)
+        fields, emails, names = form_values(form)
         with conn() as c:
             service = db.get_service(c, service_id)
             if service is None:
@@ -419,7 +424,7 @@ def create_app(config: Config | None = None, senders: Senders | None = None) -> 
             allowed = {x["id"] for x in collaborators} | (
                 {service["collaborator_id"]} if service["collaborator_id"] else set()
             )
-            result = parse_service_form(fields, emails, config.timezone, allowed)
+            result = parse_service_form(fields, emails, config.timezone, allowed, names)
             errors = result.errors
             if not errors:
                 try:
@@ -432,7 +437,7 @@ def create_app(config: Config | None = None, senders: Senders | None = None) -> 
             if errors:
                 return form_page(
                     request, c, 400, action=f"/servicios/{service_id}/editar",
-                    fields=fields, emails=emails, errors=errors, service=service,
+                    fields=fields, emails=emails, names=names, errors=errors, service=service,
                 )  # fmt: skip
         new = result.value
         calendar_moved = service["calendar_event_id"] and (

@@ -174,15 +174,17 @@ def create_service(conn: psycopg.Connection, data: ServiceInput, token: uuid.UUI
         row = _one(
             conn,
             """
-            INSERT INTO services (service_date, client_name, job, kind, scheduled_at, deadline,
-                                  price, collaborator_id, collaborator_pay, notes,
-                                  invoice_number, receipt_number, submission_token, source)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'app')
+            INSERT INTO services (service_date, client_name, client_names, job, kind,
+                                  scheduled_at, deadline, price, collaborator_id,
+                                  collaborator_pay, notes, invoice_number, receipt_number,
+                                  submission_token, source)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'app')
             RETURNING id
             """,
             (
                 data.service_date,
                 data.client_name,
+                names_column(data),
                 data.job,
                 data.kind,
                 data.scheduled_at,
@@ -199,6 +201,16 @@ def create_service(conn: psycopg.Connection, data: ServiceInput, token: uuid.UUI
         _replace_emails(conn, row["id"], data.emails)
         remember_contact(conn, data.client_name, data.emails)
     return row["id"]
+
+
+def names_column(data: ServiceInput) -> list[str] | None:
+    """client_names is stored only when there's more than one name."""
+    return data.client_names if len(data.client_names) > 1 else None
+
+
+def client_names(service: dict[str, Any]) -> list[str]:
+    """Every client name of a service row (older rows: just client_name)."""
+    return list(service.get("client_names") or [service["client_name"]])
 
 
 def _replace_emails(conn: psycopg.Connection, service_id: int, emails: list[str]) -> None:
@@ -292,7 +304,8 @@ def update_service(conn: psycopg.Connection, service_id: int, data: ServiceInput
 
         conn.execute(
             """
-            UPDATE services SET service_date = %s, client_name = %s, job = %s, kind = %s,
+            UPDATE services SET service_date = %s, client_name = %s, client_names = %s,
+                   job = %s, kind = %s,
                    scheduled_at = %s, deadline = %s, price = %s, collaborator_id = %s,
                    collaborator_pay = %s, notes = %s, receipt_number = %s, updated_at = now()
             WHERE id = %s
@@ -300,6 +313,7 @@ def update_service(conn: psycopg.Connection, service_id: int, data: ServiceInput
             (
                 data.service_date,
                 data.client_name,
+                names_column(data),
                 data.job,
                 data.kind,
                 data.scheduled_at,

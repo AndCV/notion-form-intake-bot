@@ -31,8 +31,10 @@ from typing import Any, Iterable
 import psycopg
 from psycopg.rows import dict_row
 
+from .db import client_names
 from .ledger import client_key
 from .payment_mail import Movement
+from .service_form import join_names
 
 CLIENT_WINDOW_BEFORE = timedelta(days=60)  # paid up to 60 days after the service date
 CLIENT_WINDOW_AFTER = timedelta(days=30)   # ...or up to 30 days before it (prepaid)
@@ -71,11 +73,17 @@ def is_owner(payer: str, owner: str) -> bool:
     )
 
 
-def name_matches(payer: str, client_name: str, aliases: dict[str, str]) -> bool:
-    if aliases.get(payer_key(payer)) == client_key(client_name):
+def name_matches(payer: str, client_name: str | list[str], aliases: dict[str, str]) -> bool:
+    """`client_name`: one name, or every name of a service for several
+    people (any of them may be the one paying)."""
+    names = [client_name] if isinstance(client_name, str) else client_name
+    alias = aliases.get(payer_key(payer))
+    if alias and alias in {client_key(n) for n in names} | {client_key(join_names(names))}:
         return True
     payer_t = [p for p in tokens(payer) if len(p) >= 3]
-    return any(_same_word(c, p) for c in tokens(client_name) if len(c) >= 3 for p in payer_t)
+    return any(
+        _same_word(c, p) for n in names for c in tokens(n) if len(c) >= 3 for p in payer_t
+    )
 
 
 def recipient_matches(recipient: str, payout_name: str | None) -> bool:
@@ -121,7 +129,7 @@ def decide_client(
         s for s in pending
         if credit.occurred_on - CLIENT_WINDOW_BEFORE <= s["service_date"] <= credit.occurred_on + CLIENT_WINDOW_AFTER
     ]  # fmt: skip
-    named = [s for s in window if name_matches(credit.counterparty, s["client_name"], aliases)]
+    named = [s for s in window if name_matches(credit.counterparty, client_names(s), aliases)]
     exact = [s for s in _oldest_first(named) if Decimal(s["price"]) == credit.amount]
     if exact:
         return Decision("matched", [exact[0]["id"]])
@@ -179,7 +187,7 @@ def query(conn: psycopg.Connection, sql: str, params: Any = None) -> list[dict[s
 def pending_client_services(conn: psycopg.Connection) -> list[dict[str, Any]]:
     return query(
         conn,
-        "SELECT id, service_date, client_name, job, price FROM services "
+        "SELECT id, service_date, client_name, client_names, job, price FROM services "
         "WHERE source <> 'import' AND deleted_at IS NULL AND client_paid_on IS NULL "
         "ORDER BY service_date, id",
     )

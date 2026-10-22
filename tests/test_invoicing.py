@@ -93,3 +93,15 @@ def test_receipt_names_the_collaborator_and_only_their_amount():
     assert "Colaborador Uno" in html and "$15000" in html
     assert "MÉTODO DE PAGO" not in html and "M&Eacute;TODO DE PAGO" not in html
     assert "<h1>FACTURA</h1>" not in html
+
+
+def test_invoice_and_receipt_leave_out_the_tagline():
+    """protects: the owner's request to drop the tagline from the invoice
+    (and the receipt, which shares its letterhead);
+    fails_when: INVOICE_TAGLINE shows up on either document;
+    no_claim: the email signature, which still uses it."""
+    invoice = render_invoice_html(_config(), _submission(), "0000001", date(2026, 7, 29))
+    receipt = render_receipt_html(_config(), "Eduardo", "Trabajo", 5000, "0000001", date(2026, 7, 29))
+
+    assert "Test Tagline" not in invoice and "Test Tagline" not in receipt
+    assert "Test Issuer" in invoice and "Test Issuer" in receipt

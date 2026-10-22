@@ -14,6 +14,7 @@ from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 MAX_EMAILS = 5
+MAX_NAMES = 5
 KINDS = ("clase", "trabajo")
 _EMAIL_RE = re.compile(r"^[^@\s,;<>]+@[^@\s,;<>]+\.[^@\s,;<>]+$")
 
@@ -31,6 +32,8 @@ class ServiceInput:
     emails: list[str]
     collaborator_id: int | None = None
     collaborator_pay: Decimal = Decimal(0)
+    # Every client's name; client_name is them joined ("Ana y Luis").
+    client_names: list[str] = field(default_factory=list)
 
     @property
     def profit(self) -> Decimal:
@@ -59,6 +62,24 @@ def parse_collaborator_form(fields: dict[str, str]) -> tuple[str, str, str | Non
     return name, email, payout_name, errors
 
 
+def join_names(names: list[str]) -> str:
+    """["Ana"] -> "Ana"; ["Ana", "Luis", "Marta"] -> "Ana, Luis y Marta"."""
+    if len(names) <= 1:
+        return "".join(names)
+    return ", ".join(names[:-1]) + " y " + names[-1]
+
+
+def _clean_names(names: list[str]) -> list[str]:
+    cleaned, seen = [], set()
+    for raw in names:
+        name = " ".join(raw.split())
+        key = name.casefold()
+        if name and key not in seen:
+            seen.add(key)
+            cleaned.append(name)
+    return cleaned
+
+
 def _amount(raw: str) -> Decimal | None:
     raw = (raw or "").strip()
     return Decimal(raw) if raw.isdigit() else None
@@ -69,8 +90,11 @@ def parse_service_form(
     emails: list[str],
     timezone: str,
     active_collaborator_ids: set[int],
+    names: list[str] | None = None,
 ) -> FormResult:
-    """`fields` holds the single-valued inputs; `emails` every "emails" input.
+    """`fields` holds the single-valued inputs; `emails` every "emails" input
+    and `names` every "client_names" input (without them, the single
+    "client_name" field is the only name).
 
     Amounts are whole colones (the form uses <input type=number step=1>).
     """
@@ -83,9 +107,12 @@ def parse_service_form(
     except ValueError:
         errors.append("La fecha del servicio no es válida.")
 
-    client_name, job = get("client_name"), get("job")
-    if not client_name:
+    client_names = _clean_names(names if names is not None else [get("client_name")])
+    job = get("job")
+    if not client_names:
         errors.append("Falta el nombre del cliente.")
+    if len(client_names) > MAX_NAMES:
+        errors.append(f"Máximo {MAX_NAMES} nombres por servicio.")
     if not job:
         errors.append("Falta el trabajo.")
 
@@ -148,7 +175,8 @@ def parse_service_form(
     return FormResult(
         ServiceInput(
             service_date=service_date,
-            client_name=client_name,
+            client_name=join_names(client_names),
+            client_names=client_names,
             job=job,
             kind=kind,
             scheduled_at=scheduled_at,
