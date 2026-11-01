@@ -47,29 +47,37 @@ class ExpenseReport:
     excluded_self_transfer_count: int = 0
 
 
-def close(movements: list[Movement], business_wink_refs: set[str], owner: str = "") -> ExpenseReport:
+def close(
+    movements: list[Movement],
+    business_wink_refs: set[str],
+    owner: str = "",
+    own_ibans: frozenset[str] = frozenset(),
+) -> ExpenseReport:
     """Groups `movements` (BN debits, Wink sends, BAC transactions) by date.
-    Excludes two kinds of non-spend, not just totals them separately:
+    Excludes three kinds of non-spend, not just totals them separately:
     Wink sends whose external_ref (the email Message-ID) is in
     `business_wink_refs` (collaborator payouts, already tracked by the
-    client-payment business), and any BN debit or Wink send whose
-    counterparty is `owner` themselves (is_owner(counterparty, owner)) --
-    the owner moving money between their own accounts, not spend, whether
-    that shows up as a BN debit (a self-transfer line, same NAME/CONCEPT
-    shape as a credit's payer) or a Wink send naming the owner as the
-    recipient. `owner` is the BN statement holder's name from
-    parse_bn_statement_debits; pass "" to skip this check (e.g. no BN
-    statement was read this run).
-
-    NOT caught here: a Wink send to an IBAN with no name ("Cuenta <IBAN>",
-    see parse_wink_send) could also be the owner's own account at another
-    bank -- there's no name to check it against, so it's left as spend."""
+    client-payment business); any BN debit or Wink send whose counterparty
+    is `owner` themselves (is_owner(counterparty, owner)) -- the owner
+    moving money between their own accounts, not spend, whether that shows
+    up as a BN debit (a self-transfer line, same NAME/CONCEPT shape as a
+    credit's payer) or a Wink send naming the owner as the recipient; and a
+    Wink send to an IBAN with no name ("Cuenta <IBAN>", see
+    parse_wink_send) whose IBAN is in `own_ibans` -- that case has no name
+    to check against is_owner, so it has to be confirmed by hand once and
+    listed (OWN_IBAN_ACCOUNTS in .env.example) rather than inferred.
+    `owner` is the BN statement holder's name from
+    parse_bn_statement_debits; pass "" to skip the name check (e.g. no BN
+    statement was read this run)."""
     personal, excluded_business, excluded_self = [], 0, 0
     for m in movements:
         if m.source == "wink_send" and m.external_ref in business_wink_refs:
             excluded_business += 1
             continue
         if m.source in ("bn_statement_debit", "wink_send") and owner and is_owner(m.counterparty, owner):
+            excluded_self += 1
+            continue
+        if m.source == "wink_send" and m.counterparty.removeprefix("Cuenta ").strip() in own_ibans:
             excluded_self += 1
             continue
         personal.append(m)

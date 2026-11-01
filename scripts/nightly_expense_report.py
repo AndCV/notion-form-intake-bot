@@ -81,6 +81,13 @@ def main() -> int:
     is_month_end = (yesterday + timedelta(days=1)).day == 1
 
     business_refs = _business_wink_refs(os.environ["DATABASE_URL"])
+    # Optional: IBANs of the owner's own accounts at other banks, confirmed
+    # by hand (a Wink send to a bare IBAN has no name for is_owner to check
+    # -- see lib.expenses.close). Comma-separated, e.g.
+    # "CR00000000000000000001,CR00000000000000000002".
+    own_ibans = frozenset(
+        iban.strip() for iban in os.environ.get("OWN_IBAN_ACCOUNTS", "").split(",") if iban.strip()
+    )
 
     # On a normal night, read exactly yesterday. On the month's last day,
     # widen the read to the whole month so the month-end total comes from
@@ -124,7 +131,9 @@ def main() -> int:
     finally:
         reader.close()
 
-    daily_report = close([m for m in movements if m.occurred_on == yesterday], business_refs, owner)
+    daily_report = close(
+        [m for m in movements if m.occurred_on == yesterday], business_refs, owner, own_ibans
+    )
     message = format_message(daily_report)
     print(
         f"{yesterday}: {stats} -> total {daily_report.total} ({len(daily_report.days)} day(s), "
@@ -134,7 +143,7 @@ def main() -> int:
 
     month_message = None
     if is_month_end:
-        month_report = close(movements, business_refs, owner)
+        month_report = close(movements, business_refs, owner, own_ibans)
         month_message = format_month_total(month_report, month_start)
         print(f"{month_start:%Y-%m} (month end): total {month_report.total}")
 

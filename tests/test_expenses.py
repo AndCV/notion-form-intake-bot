@@ -95,6 +95,31 @@ def test_close_excludes_self_transfers_on_bn_and_wink():
     assert no_owner_report.excluded_self_transfer_count == 0
 
 
+def test_close_excludes_wink_sends_to_a_confirmed_own_iban():
+    """protects: a Wink send to a bare IBAN ("Cuenta <IBAN>", no name) is excluded only
+      when that IBAN is in own_ibans -- it can't be inferred via is_owner, there's no name;
+    fails_when: a confirmed own-IBAN send still counts as spend, or an unconfirmed one
+      (not in own_ibans) gets wrongly excluded;
+    no_claim: none beyond protects."""
+    own_account = _movement(
+        "wink_send", date(2026, 10, 15), "250000.00", external_ref="<w5@x>",
+        counterparty="Cuenta CR00000000000000000001",
+    )
+    unconfirmed_account = _movement(
+        "wink_send", date(2026, 10, 16), "9000.00", external_ref="<w6@x>",
+        counterparty="Cuenta CR00000000000000000002",
+    )
+
+    report = close(
+        [own_account, unconfirmed_account],
+        business_wink_refs=set(),
+        own_ibans=frozenset({"CR00000000000000000001"}),
+    )
+
+    assert report.total == Decimal("9000.00")
+    assert report.excluded_self_transfer_count == 1
+
+
 def test_format_message_empty_and_populated():
     """protects: each movement shows its merchant and card, days get a subtotal, the
       message ends with the grand total, and a BN debit (no counterparty) falls back to
