@@ -17,6 +17,7 @@ FECHA NÚMERO DESCRIPCIÓN MONTO SALDO DIARIO
 21-09 601118 18-09-26 R INSTITUCIONAL TEC CA CARTAGO CRI 500.00- 2,575.29
 21-09 94988933 19-09-26 PEREZ SOLANO MARIA/LO QUE DEB A 6075918 10,000.00+ 11,175.29
 21-09 71220099 20-09-26 SUPERMERCADO XYZ SAN JOSE CRI 8,250.50- 20,175.29
+21-09 88112233 21-09-26 CUBILLO VILLALOBOS A/RECARGA DE DINERO 5,000.00- 15,175.29
 """
 
 BAC_HTML = """<table>
@@ -32,17 +33,22 @@ BAC_HTML = """<table>
 
 
 def test_bn_statement_debits_are_the_owners_own_spend():
-    """protects: every "-" line becomes a debit with amount/date/description, credits ignored;
-    fails_when: a credit leaks in, a debit is lost, or amount/date parsing drifts from parse_bn_statement;
+    """protects: every "-" line becomes a debit with amount/date/description, credits ignored,
+      the statement owner is returned, and a self-transfer line (NAME/CONCEPT) splits its
+      payer into counterparty the same way a credit does;
+    fails_when: a credit leaks in, a debit is lost, the owner is wrong, or a self-transfer's
+      name lands in description instead of counterparty (so it can't be filtered later);
     no_claim: verified only against synthetic lines matching the real statement's layout."""
-    debits = parse_bn_statement_debits(STATEMENT_WITH_DEBITS)
+    owner, debits = parse_bn_statement_debits(STATEMENT_WITH_DEBITS)
 
-    assert [(d.description, d.amount, d.occurred_on, d.counterparty) for d in debits] == [
-        ("R INSTITUCIONAL TEC CA CARTAGO CRI", Decimal(500), date(2026, 9, 18), ""),
-        ("SUPERMERCADO XYZ SAN JOSE CRI", Decimal("8250.50"), date(2026, 9, 20), ""),
+    assert owner == "ANDRES DAVID CUBILLO VILLALOBOS"
+    assert [(d.counterparty, d.description, d.amount, d.occurred_on) for d in debits] == [
+        ("", "R INSTITUCIONAL TEC CA CARTAGO CRI", Decimal(500), date(2026, 9, 18)),
+        ("", "SUPERMERCADO XYZ SAN JOSE CRI", Decimal("8250.50"), date(2026, 9, 20)),
+        ("CUBILLO VILLALOBOS A", "RECARGA DE DINERO", Decimal(5000), date(2026, 9, 21)),
     ]
     assert all(d.source == "bn_statement_debit" for d in debits)
-    assert len({d.external_ref for d in debits}) == 2
+    assert len({d.external_ref for d in debits}) == 3
 
 
 def test_bac_transaction_reads_merchant_amount_and_date():

@@ -55,6 +55,46 @@ def test_close_excludes_business_wink_sends():
     assert len(report.days) == 1 and len(report.days[0].movements) == 1
 
 
+def test_close_excludes_self_transfers_on_bn_and_wink():
+    """protects: a BN debit or a Wink send naming the owner themselves
+      (is_owner(counterparty, owner)) isn't counted as spend, while a genuine merchant
+      debit (no payer to split), a differently-named debit, and a Wink send to someone
+      else still are;
+    fails_when: a self-transfer on either source inflates the total, or a real
+      debit/send gets wrongly excluded;
+    no_claim: is_owner's truncated-name matching is lib.payments', not re-tested here."""
+    bn_self_transfer = _movement(
+        "bn_statement_debit", date(2026, 10, 20), "50000.00", counterparty="CUBILLO VILLALOBOS A"
+    )
+    wink_self_transfer = _movement(
+        "wink_send", date(2026, 10, 20), "221000.00", external_ref="<w3@x>", counterparty="ANDRES DAVID CUBILLO"
+    )
+    merchant = _movement(
+        "bn_statement_debit", date(2026, 10, 20), "3000.00", counterparty="", description="SODA LA DEPORTIVA"
+    )
+    someone_else = _movement(
+        "bn_statement_debit", date(2026, 10, 20), "1000.00", counterparty="PEREZ SOLANO MARIA"
+    )
+    wink_to_someone_else = _movement(
+        "wink_send", date(2026, 10, 20), "2000.00", external_ref="<w4@x>", counterparty="LEONEL CUBILLO RAMIREZ"
+    )
+
+    report = close(
+        [bn_self_transfer, wink_self_transfer, merchant, someone_else, wink_to_someone_else],
+        business_wink_refs=set(),
+        owner="ANDRES DAVID CUBILLO VILLALOBOS",
+    )
+
+    assert report.total == Decimal("6000.00")
+    assert report.excluded_self_transfer_count == 2
+    assert len(report.days[0].movements) == 3
+
+    # owner="" (no BN statement read this run) skips the check entirely.
+    no_owner_report = close([bn_self_transfer], business_wink_refs=set())
+    assert no_owner_report.total == Decimal("50000.00")
+    assert no_owner_report.excluded_self_transfer_count == 0
+
+
 def test_format_message_empty_and_populated():
     """protects: each movement shows its merchant and card, days get a subtotal, the
       message ends with the grand total, and a BN debit (no counterparty) falls back to

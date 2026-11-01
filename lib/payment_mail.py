@@ -5,8 +5,11 @@ Three senders are read:
 - Banco Nacional's monthly statement (bncontacto@bncr.fi.cr, subject
   "Estado de cuenta ...", PDF attached): every credit line names who paid,
   e.g. ``20-09-26 ANA CATALINA RODRIGU/TRANSFERENCIA SINPE 7,000.00+``;
-  every debit line (``500.00-``) is the owner's own spend, no payer name.
-  BN sends no per-transfer email, so movements show up once a month.
+  every debit line (``500.00-``) is the owner's own spend -- a self-transfer
+  between their own accounts names them the same way a credit names a payer
+  (e.g. ``CUBILLO VILLALOBOS A/RECARGA DE DINERO``), a merchant charge has
+  no payer to split out. BN sends no per-transfer email, so movements show
+  up once a month.
 - Wink's "Notificación de envío" (transacciones@holawink.com): one email per
   transfer the owner sends, with recipient name, amount and date.
 - BAC's "Notificación de transacción" (notificacionbac@baccredomatic.cr,
@@ -124,12 +127,19 @@ def parse_bn_statement(text: str) -> Statement:
     return Statement(account, owner, credits, unparsed)
 
 
-def parse_bn_statement_debits(text: str) -> list[Movement]:
+def parse_bn_statement_debits(text: str) -> tuple[str, list[Movement]]:
     """Debits (``-`` lines) of one BN statement's extracted text -- the
-    owner's own card/transfer spend. No payer to split out, unlike credits:
-    the whole description is the merchant/concept, e.g. ``R INSTITUCIONAL
-    TEC CA CARTAGO CRI``."""
-    stmt_month, stmt_year, account, _owner = _bn_statement_header(text)
+    owner's own card/transfer spend, plus their own transfers between
+    accounts (same ``NAME/CONCEPT`` shape as a credit's payer/concept, e.g.
+    ``CUBILLO VILLALOBOS A/RECARGA DE DINERO``). A line without ``/`` has no
+    payer to split out -- the whole description is the merchant/concept,
+    e.g. ``R INSTITUCIONAL TEC CA CARTAGO CRI``.
+
+    Returns (owner, debits): the caller is expected to drop debits whose
+    counterparty is the owner themselves (lib.payments.is_owner) before
+    treating them as personal spend -- a self-transfer moved money, it
+    didn't spend it. See lib.expenses.close."""
+    stmt_month, stmt_year, account, owner = _bn_statement_header(text)
 
     debits = []
     for raw in text.splitlines():
@@ -138,17 +148,20 @@ def parse_bn_statement_debits(text: str) -> list[Movement]:
         if not match or match["sign"] != "-":
             continue
         occurred = _bn_occurred_on(match, stmt_month, stmt_year)
+        desc = match["desc"].strip()
+        payer, sep, concept = desc.partition("/")
+        counterparty, description = (payer.strip(), concept.strip()) if sep else ("", desc)
         debits.append(
             Movement(
                 source="bn_statement_debit",
                 occurred_on=occurred,
                 amount=_amount(match["amount"]),
-                counterparty="",
-                description=match["desc"].strip(),
+                counterparty=counterparty,
+                description=description,
                 external_ref=f"{account}:{match['number']}:{occurred.isoformat()}:{match['amount']}:D",
             )
         )
-    return debits
+    return owner, debits
 
 
 def pdf_text(pdf_bytes: bytes) -> str:

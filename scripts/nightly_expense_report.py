@@ -89,6 +89,7 @@ def main() -> int:
 
     reader = GmailReader(os.environ["GMAIL_ADDRESS"], os.environ["GMAIL_APP_PASSWORD"])
     movements = []
+    owner = ""
     stats = {"emails": 0, "debits": 0, "sends": 0, "bac": 0}
     try:
         # BN's statement email isn't sent the day of the transaction -- it's
@@ -100,10 +101,9 @@ def main() -> int:
         for item in reader.items(bn_since, skip=set(), wanted=[GmailReader.DEFAULT_WANTED[0]]):
             stats["emails"] += 1
             for pdf in item.pdfs or []:
-                debits = [
-                    d for d in parse_bn_statement_debits(pdf_text(pdf))
-                    if range_start <= d.occurred_on <= yesterday
-                ]
+                stmt_owner, all_debits = parse_bn_statement_debits(pdf_text(pdf))
+                owner = owner or stmt_owner
+                debits = [d for d in all_debits if range_start <= d.occurred_on <= yesterday]
                 stats["debits"] += len(debits)
                 movements += debits
 
@@ -124,16 +124,17 @@ def main() -> int:
     finally:
         reader.close()
 
-    daily_report = close([m for m in movements if m.occurred_on == yesterday], business_refs)
+    daily_report = close([m for m in movements if m.occurred_on == yesterday], business_refs, owner)
     message = format_message(daily_report)
     print(
         f"{yesterday}: {stats} -> total {daily_report.total} ({len(daily_report.days)} day(s), "
-        f"{daily_report.excluded_business_count} business movement(s) excluded)"
+        f"{daily_report.excluded_business_count} business, "
+        f"{daily_report.excluded_self_transfer_count} self-transfer movement(s) excluded)"
     )
 
     month_message = None
     if is_month_end:
-        month_report = close(movements, business_refs)
+        month_report = close(movements, business_refs, owner)
         month_message = format_month_total(month_report, month_start)
         print(f"{month_start:%Y-%m} (month end): total {month_report.total}")
 

@@ -3,9 +3,12 @@ the Telegram summary text.
 
 Independent of lib/payments.py (the client-payment business, matched against
 services and collaborators): this is the owner's own spend across BN debits,
-Wink sends and BAC transactions (lib/payment_mail.py). A Wink send already
-recorded as a collaborator payout in payment_events is excluded -- that's
-business spend, not personal, and scripts/sync_payments.py already tracks it.
+Wink sends and BAC transactions (lib/payment_mail.py). Two kinds of
+non-spend are excluded, not just totaled separately: a Wink send already
+recorded as a collaborator payout in payment_events (business spend,
+already tracked by scripts/sync_payments.py), and a BN debit or Wink send
+naming the owner themselves (lib.payments.is_owner) -- the owner moving
+money between their own accounts, not something they actually spent.
 
 Pure functions over plain Movement records, so they're tested without a
 mailbox or a database.
@@ -20,6 +23,7 @@ from decimal import Decimal
 
 from .ledger import MONTH_NAMES
 from .payment_mail import Movement
+from .payments import is_owner
 
 SOURCE_LABELS = {
     "bn_statement_debit": "BN",
@@ -40,17 +44,33 @@ class ExpenseReport:
     days: list[DayTotal]
     total: Decimal
     excluded_business_count: int
+    excluded_self_transfer_count: int = 0
 
 
-def close(movements: list[Movement], business_wink_refs: set[str]) -> ExpenseReport:
-    """Groups `movements` (BN debits, Wink sends, BAC transactions) by date,
-    excluding Wink sends whose external_ref (the email Message-ID) is in
-    `business_wink_refs` -- those are collaborator payouts already tracked
-    by the client-payment business, not personal spend."""
-    personal, excluded = [], 0
+def close(movements: list[Movement], business_wink_refs: set[str], owner: str = "") -> ExpenseReport:
+    """Groups `movements` (BN debits, Wink sends, BAC transactions) by date.
+    Excludes two kinds of non-spend, not just totals them separately:
+    Wink sends whose external_ref (the email Message-ID) is in
+    `business_wink_refs` (collaborator payouts, already tracked by the
+    client-payment business), and any BN debit or Wink send whose
+    counterparty is `owner` themselves (is_owner(counterparty, owner)) --
+    the owner moving money between their own accounts, not spend, whether
+    that shows up as a BN debit (a self-transfer line, same NAME/CONCEPT
+    shape as a credit's payer) or a Wink send naming the owner as the
+    recipient. `owner` is the BN statement holder's name from
+    parse_bn_statement_debits; pass "" to skip this check (e.g. no BN
+    statement was read this run).
+
+    NOT caught here: a Wink send to an IBAN with no name ("Cuenta <IBAN>",
+    see parse_wink_send) could also be the owner's own account at another
+    bank -- there's no name to check it against, so it's left as spend."""
+    personal, excluded_business, excluded_self = [], 0, 0
     for m in movements:
         if m.source == "wink_send" and m.external_ref in business_wink_refs:
-            excluded += 1
+            excluded_business += 1
+            continue
+        if m.source in ("bn_statement_debit", "wink_send") and owner and is_owner(m.counterparty, owner):
+            excluded_self += 1
             continue
         personal.append(m)
 
@@ -63,14 +83,19 @@ def close(movements: list[Movement], business_wink_refs: set[str]) -> ExpenseRep
         for day, ms in sorted(by_day.items())
     ]
     total = sum((d.total for d in days), Decimal(0))
-    return ExpenseReport(days=days, total=total, excluded_business_count=excluded)
+    return ExpenseReport(
+        days=days,
+        total=total,
+        excluded_business_count=excluded_business,
+        excluded_self_transfer_count=excluded_self,
+    )
 
 
 def _where(m: Movement) -> str:
-    """Merchant/recipient text for one line of the message: BAC and Wink
-    carry it in counterparty (comercio / destinatario); a BN debit has no
-    payer to split out (see parse_bn_statement_debits), so its merchant
-    text is in description instead."""
+    """Merchant/recipient text for one line of the message: BAC, Wink and a
+    BN self-looking debit carry it in counterparty; a plain merchant debit
+    (see parse_bn_statement_debits) has no payer to split out, so its
+    merchant text is in description instead."""
     return m.counterparty or m.description or "(sin detalle)"
 
 
