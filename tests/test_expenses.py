@@ -8,13 +8,15 @@ from lib.expenses import close, format_message
 from lib.payment_mail import Movement
 
 
-def _movement(source, occurred_on, amount, external_ref="<x@x>") -> Movement:
+def _movement(
+    source, occurred_on, amount, external_ref="<x@x>", counterparty="SOME MERCHANT", description=""
+) -> Movement:
     return Movement(
         source=source,
         occurred_on=occurred_on,
         amount=Decimal(amount),
-        counterparty="SOME MERCHANT",
-        description="",
+        counterparty=counterparty,
+        description=description,
         external_ref=external_ref,
     )
 
@@ -54,20 +56,32 @@ def test_close_excludes_business_wink_sends():
 
 
 def test_format_message_empty_and_populated():
-    """protects: the message is non-empty and readable with no movements and with several days;
-    fails_when: an empty report crashes formatting, or the total/day lines are malformed."""
+    """protects: each movement shows its merchant and card, days get a subtotal, the
+      message ends with the grand total, and a BN debit (no counterparty) falls back to
+      its description text;
+    fails_when: a merchant/card line is missing or mislabeled, a subtotal is wrong, or a
+      BN debit with no counterparty renders blank instead of its description."""
     empty = close([], business_wink_refs=set())
     assert format_message(empty) == "Cierre de gastos: sin movimientos."
 
     report = close(
         [
-            _movement("bac_transaction", date(2026, 10, 20), "8500.00"),
-            _movement("bn_statement_debit", date(2026, 10, 21), "1500.00"),
+            _movement("bac_transaction", date(2026, 10, 20), "8500.00", counterparty="LIBRERIA UNIVERSAL"),
+            _movement(
+                "bn_statement_debit",
+                date(2026, 10, 21),
+                "1500.00",
+                counterparty="",
+                description="SUPERMERCADO XYZ",
+            ),
         ],
         business_wink_refs=set(),
     )
     message = format_message(report)
     assert message.startswith("*Cierre de gastos*")
-    assert "20/10: ₡8,500.00 (1 mov.)" in message
-    assert "21/10: ₡1,500.00 (1 mov.)" in message
+    assert "*20/10*" in message and "*21/10*" in message
+    assert "  • LIBRERIA UNIVERSAL (BAC): ₡8,500.00" in message
+    assert "  Subtotal: ₡8,500.00" in message
+    assert "  • SUPERMERCADO XYZ (BN): ₡1,500.00" in message
+    assert "  Subtotal: ₡1,500.00" in message
     assert message.endswith("*Total: ₡10,000.00*")

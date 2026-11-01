@@ -1,5 +1,5 @@
 """Nightly personal-spend closing: groups money movements by date and formats
-the WhatsApp summary text.
+the Telegram summary text.
 
 Independent of lib/payments.py (the client-payment business, matched against
 services and collaborators): this is the owner's own spend across BN debits,
@@ -65,13 +65,27 @@ def close(movements: list[Movement], business_wink_refs: set[str]) -> ExpenseRep
     return ExpenseReport(days=days, total=total, excluded_business_count=excluded)
 
 
+def _where(m: Movement) -> str:
+    """Merchant/recipient text for one line of the message: BAC and Wink
+    carry it in counterparty (comercio / destinatario); a BN debit has no
+    payer to split out (see parse_bn_statement_debits), so its merchant
+    text is in description instead."""
+    return m.counterparty or m.description or "(sin detalle)"
+
+
 def format_message(report: ExpenseReport, currency_symbol: str = "₡") -> str:
-    """Plain-text summary (Telegram legacy Markdown: *bold*), one line per
-    day plus a grand total -- short enough for a single chat message."""
+    """Plain-text summary (Telegram legacy Markdown: *bold*): one line per
+    movement (where it went + which card) under each day, then the day and
+    grand totals -- still short enough for a single chat message at normal
+    daily volumes."""
     if not report.days:
         return "Cierre de gastos: sin movimientos."
     lines = ["*Cierre de gastos*"]
     for day in report.days:
-        lines.append(f"{day.occurred_on:%d/%m}: {currency_symbol}{day.total:,.2f} ({len(day.movements)} mov.)")
+        lines.append(f"*{day.occurred_on:%d/%m}*")
+        for m in day.movements:
+            source = SOURCE_LABELS.get(m.source, m.source)
+            lines.append(f"  • {_where(m)} ({source}): {currency_symbol}{m.amount:,.2f}")
+        lines.append(f"  Subtotal: {currency_symbol}{day.total:,.2f}")
     lines.append(f"*Total: {currency_symbol}{report.total:,.2f}*")
     return "\n".join(lines)
