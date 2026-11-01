@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
+from .ledger import MONTH_NAMES
 from .payment_mail import Movement
 
 SOURCE_LABELS = {
@@ -88,4 +89,24 @@ def format_message(report: ExpenseReport, currency_symbol: str = "₡") -> str:
             lines.append(f"  • {_where(m)} ({source}): {currency_symbol}{m.amount:,.2f}")
         lines.append(f"  Subtotal: {currency_symbol}{day.total:,.2f}")
     lines.append(f"*Total: {currency_symbol}{report.total:,.2f}*")
+    return "\n".join(lines)
+
+
+def format_month_total(report: ExpenseReport, month_start: date, currency_symbol: str = "₡") -> str:
+    """Short monthly summary (Telegram legacy Markdown: *bold*): total spend
+    for `month_start`'s month plus a subtotal per card. `report` must cover
+    the whole month (scripts/nightly_expense_report.py sends this once, on
+    the last day's nightly run, alongside that day's regular message)."""
+    month_name = MONTH_NAMES[month_start.month - 1]
+    header = f"*Cierre de {month_name} {month_start.year}*"
+    if not report.days:
+        return f"{header}: sin movimientos."
+    by_source: dict[str, Decimal] = defaultdict(Decimal)
+    for day in report.days:
+        for m in day.movements:
+            by_source[m.source] += m.amount
+    lines = [header]
+    for source, amount in sorted(by_source.items()):
+        lines.append(f"  {SOURCE_LABELS.get(source, source)}: {currency_symbol}{amount:,.2f}")
+    lines.append(f"*Total del mes: {currency_symbol}{report.total:,.2f}*")
     return "\n".join(lines)

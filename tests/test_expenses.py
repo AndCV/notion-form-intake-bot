@@ -4,7 +4,7 @@ data only."""
 from datetime import date
 from decimal import Decimal
 
-from lib.expenses import close, format_message
+from lib.expenses import close, format_message, format_month_total
 from lib.payment_mail import Movement
 
 
@@ -85,3 +85,27 @@ def test_format_message_empty_and_populated():
     assert "  • SUPERMERCADO XYZ (BN): ₡1,500.00" in message
     assert "  Subtotal: ₡1,500.00" in message
     assert message.endswith("*Total: ₡10,000.00*")
+
+
+def test_format_month_total_breaks_down_by_card():
+    """protects: the month-end message names the Spanish month, sums per card
+      (BN/Wink/BAC) and ends with the grand total;
+    fails_when: a card subtotal is wrong, the month name/year is off, or an
+      empty month crashes formatting instead of saying so."""
+    empty = close([], business_wink_refs=set())
+    assert format_month_total(empty, date(2026, 10, 1)) == "*Cierre de Octubre 2026*: sin movimientos."
+
+    report = close(
+        [
+            _movement("bac_transaction", date(2026, 10, 5), "13449.99"),
+            _movement("wink_send", date(2026, 10, 12), "5000.00", external_ref="<w2@x>"),
+            _movement("bn_statement_debit", date(2026, 10, 31), "8250.50"),
+        ],
+        business_wink_refs=set(),
+    )
+    message = format_month_total(report, date(2026, 10, 1))
+    assert message.startswith("*Cierre de Octubre 2026*")
+    assert "  BAC: ₡13,449.99" in message
+    assert "  BN: ₡8,250.50" in message
+    assert "  Wink: ₡5,000.00" in message
+    assert message.endswith("*Total del mes: ₡26,700.49*")

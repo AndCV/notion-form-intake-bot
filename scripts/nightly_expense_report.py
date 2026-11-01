@@ -1,4 +1,5 @@
-"""Closes yesterday's personal spend and sends it over Telegram.
+"""Closes yesterday's personal spend and sends it over Telegram. On the
+month's last day, also sends a month-total summary.
 
     python scripts/nightly_expense_report.py            # read, close, send
     python scripts/nightly_expense_report.py --dry-run  # read and print only; send nothing
@@ -11,10 +12,13 @@ payment_events (read-only -- see lib/expenses.py), and messages the total
 to a Telegram bot (lib/telegram.py) -- not WhatsApp: Meta's Cloud API needs
 a Business Account, and CallMeBot (the free workaround) closed registration.
 
-Stateless by design: each run re-reads exactly yesterday's emails (IMAP
-SINCE + a same-day filter) rather than tracking a processed-message table,
-so there's nothing to replay or dedupe across runs -- a closing is naturally
-scoped to one day.
+Stateless by design: each run re-reads exactly the emails it needs for the
+window it's closing (IMAP SINCE + a date-range filter) rather than tracking
+a processed-message table, so there's nothing to replay or dedupe across
+runs. On a normal night that window is just yesterday; on the month's last
+day it widens to the whole month (so the month-end message's total is
+computed from the same read, not a second mailbox pass or a stored running
+total).
 
 Prints totals only, never merchant/recipient names: its output lands in
 public CI logs.
@@ -36,7 +40,7 @@ load_dotenv()
 
 from lib import telegram
 from lib.db import connect
-from lib.expenses import close, format_message
+from lib.expenses import close, format_message, format_month_total
 from lib.payment_mail import (
     GmailReader,
     parse_bac_transaction,
@@ -73,61 +77,75 @@ def main() -> int:
 
     tz = ZoneInfo(os.environ.get("TIMEZONE", "America/Costa_Rica"))
     yesterday = datetime.now(tz).date() - timedelta(days=1)
+    month_start = yesterday.replace(day=1)
+    is_month_end = (yesterday + timedelta(days=1)).day == 1
 
     business_refs = _business_wink_refs(os.environ["DATABASE_URL"])
+
+    # On a normal night, read exactly yesterday. On the month's last day,
+    # widen the read to the whole month so the month-end total comes from
+    # this same pass -- no second mailbox read, no stored running total.
+    range_start = month_start if is_month_end else yesterday
 
     reader = GmailReader(os.environ["GMAIL_ADDRESS"], os.environ["GMAIL_APP_PASSWORD"])
     movements = []
     stats = {"emails": 0, "debits": 0, "sends": 0, "bac": 0}
     try:
         # BN's statement email isn't sent the day of the transaction -- it's
-        # monthly, on BN's own schedule -- so "SINCE yesterday" would almost
-        # always miss it even though it lists yesterday's debit. Search back
-        # far enough to always catch the latest statement, then keep only
-        # the lines that actually fall on yesterday.
-        bn_since = yesterday - timedelta(days=35)
+        # monthly, on BN's own schedule -- so "SINCE range_start" would almost
+        # always miss it even though it lists the debits in range. Search
+        # back far enough to always catch the latest statement, then keep
+        # only the lines that actually fall in [range_start, yesterday].
+        bn_since = range_start - timedelta(days=35)
         for item in reader.items(bn_since, skip=set(), wanted=[GmailReader.DEFAULT_WANTED[0]]):
             stats["emails"] += 1
             for pdf in item.pdfs or []:
                 debits = [
-                    d for d in parse_bn_statement_debits(pdf_text(pdf)) if d.occurred_on == yesterday
+                    d for d in parse_bn_statement_debits(pdf_text(pdf))
+                    if range_start <= d.occurred_on <= yesterday
                 ]
                 stats["debits"] += len(debits)
                 movements += debits
 
         # Wink and BAC notify immediately, same day as the transaction.
         same_day_wanted = [GmailReader.DEFAULT_WANTED[1], GmailReader.EXPENSE_WANTED[2]]
-        for item in reader.items(yesterday, skip=set(), wanted=same_day_wanted):
+        for item in reader.items(range_start, skip=set(), wanted=same_day_wanted):
             stats["emails"] += 1
             if item.kind == "wink_send":
                 send = parse_wink_send(item.text or "", item.message_id)
-                if send and send.occurred_on == yesterday:
+                if send and range_start <= send.occurred_on <= yesterday:
                     stats["sends"] += 1
                     movements.append(send)
             elif item.kind == "bac_transaction":
                 txn = parse_bac_transaction(item.html or "", item.message_id)
-                if txn and txn.occurred_on == yesterday:
+                if txn and range_start <= txn.occurred_on <= yesterday:
                     stats["bac"] += 1
                     movements.append(txn)
     finally:
         reader.close()
 
-    report = close(movements, business_refs)
-    message = format_message(report)
+    daily_report = close([m for m in movements if m.occurred_on == yesterday], business_refs)
+    message = format_message(daily_report)
     print(
-        f"{yesterday}: {stats} -> total {report.total} ({len(report.days)} day(s), "
-        f"{report.excluded_business_count} business movement(s) excluded)"
+        f"{yesterday}: {stats} -> total {daily_report.total} ({len(daily_report.days)} day(s), "
+        f"{daily_report.excluded_business_count} business movement(s) excluded)"
     )
+
+    month_message = None
+    if is_month_end:
+        month_report = close(movements, business_refs)
+        month_message = format_month_total(month_report, month_start)
+        print(f"{month_start:%Y-%m} (month end): total {month_report.total}")
 
     if dry_run:
         print(message)
+        if month_message:
+            print(month_message)
         return 0
 
-    telegram.send(
-        os.environ["TELEGRAM_BOT_TOKEN"],
-        os.environ["TELEGRAM_CHAT_ID"],
-        message,
-    )
+    telegram.send(os.environ["TELEGRAM_BOT_TOKEN"], os.environ["TELEGRAM_CHAT_ID"], message)
+    if month_message:
+        telegram.send(os.environ["TELEGRAM_BOT_TOKEN"], os.environ["TELEGRAM_CHAT_ID"], month_message)
     return 0
 
 

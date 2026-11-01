@@ -130,11 +130,14 @@ Dockerfile                   # the image Render runs
   workaround) closed its registration (2026-11-01). A Wink send already recorded
   there as a collaborator payout is excluded, so the business and personal
   totals never double-count the same transfer. Stateless by design: each
-  run re-reads exactly yesterday's emails (a fixed one-day window) instead
-  of tracking a processed-message table — a closing is naturally scoped to
-  one day, so there's nothing to replay. BN's statement arrives on its own
-  monthly schedule, not the day of the transaction, so the script searches
-  further back for it and keeps only the lines that land on yesterday.
+  run re-reads exactly the window it needs (yesterday, or the whole month on
+  the month's last day) instead of tracking a processed-message table or a
+  running total — a closing is naturally scoped to that window, so there's
+  nothing to replay. On the month's last day, a second message
+  (`format_month_total`) sums the same read by card (BN/Wink/BAC) and total,
+  instead of re-reading the mailbox a second time. BN's statement arrives on
+  its own monthly schedule, not the day of the transaction, so the script
+  searches further back for it and keeps only the lines inside the window.
   BAC's reversal/refund wording isn't confirmed from a real sample yet
   (`_BAC_REFUND_TYPES` in `lib/payment_mail.py`) — verify against a real
   one and extend it if BAC names it differently.
