@@ -1,13 +1,23 @@
 """Reads money movements from the owner's Gmail (IMAP, read-only).
 
-Only two senders are read:
+Three senders are read:
 
 - Banco Nacional's monthly statement (bncontacto@bncr.fi.cr, subject
   "Estado de cuenta ...", PDF attached): every credit line names who paid,
-  e.g. ``20-09-26 ANA CATALINA RODRIGU/TRANSFERENCIA SINPE 7,000.00+``.
-  BN sends no per-transfer email, so client payments show up once a month.
+  e.g. ``20-09-26 ANA CATALINA RODRIGU/TRANSFERENCIA SINPE 7,000.00+``;
+  every debit line (``500.00-``) is the owner's own spend, no payer name.
+  BN sends no per-transfer email, so movements show up once a month.
 - Wink's "Notificación de envío" (transacciones@holawink.com): one email per
   transfer the owner sends, with recipient name, amount and date.
+- BAC's "Notificación de transacción" (notificacionbac@baccredomatic.cr,
+  HTML): one email per card transaction (Comercio/Fecha/Monto/Tipo de
+  Transacción table), sent the moment it's authorized.
+
+scripts/sync_payments.py reads BN credits + Wink sends for the client-payment
+business (lib/payments.py). scripts/nightly_expense_report.py reads BN
+debits + Wink sends + BAC transactions for the owner's personal spend
+closing (lib/expenses.py) -- a separate, read-only concern over the same
+mailbox; it never writes payment_events.
 
 Parsing is pure (text in, records out) so it's tested without a mailbox.
 """
@@ -22,15 +32,17 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 from email.header import decode_header, make_header
+from html import unescape
 from typing import Iterator
 
 BN_SENDER = "bncontacto@bncr.fi.cr"
 WINK_SENDER = "transacciones@holawink.com"
+BAC_SENDER = "notificacionbac@baccredomatic.cr"
 
 
 @dataclass
 class Movement:
-    source: str  # 'bn_statement' | 'wink_send'
+    source: str  # 'bn_statement' | 'bn_statement_debit' | 'wink_send' | 'bac_transaction'
     occurred_on: date
     amount: Decimal
     counterparty: str
@@ -62,14 +74,29 @@ class Statement:
     unparsed_credit_lines: int
 
 
-def parse_bn_statement(text: str) -> Statement:
-    """Credits (``+`` lines) of one BN statement's extracted text."""
+def _bn_occurred_on(match: re.Match, stmt_month: int, stmt_year: int) -> date:
+    if match["when"]:
+        d, mth, yy = (int(x) for x in match["when"].split("-"))
+        return date(2000 + yy, mth, d)
+    d, mth = (int(x) for x in match["posted"].split("-"))
+    # A statement spans ~a month; a later month than the statement's own
+    # belongs to the previous year (December lines in January).
+    return date(stmt_year - (mth > stmt_month), mth, d)
+
+
+def _bn_statement_header(text: str) -> tuple[int, int, str, str]:
     m = _BN_STATEMENT_DATE.search(text)
     if not m:
         raise ValueError("BN statement without 'Fecha éste estado'")
     stmt_month, stmt_year = int(m.group(2)), int(m.group(3))
     account = (_BN_ACCOUNT.search(text) or [None, "?"])[1]
     owner = (_BN_OWNER.search(text) or [None, ""])[1].strip()
+    return stmt_month, stmt_year, account, owner
+
+
+def parse_bn_statement(text: str) -> Statement:
+    """Credits (``+`` lines) of one BN statement's extracted text."""
+    stmt_month, stmt_year, account, owner = _bn_statement_header(text)
 
     credits, unparsed = [], 0
     for raw in text.splitlines():
@@ -81,14 +108,7 @@ def parse_bn_statement(text: str) -> Statement:
             continue
         if match["sign"] != "+":
             continue
-        if match["when"]:
-            d, mth, yy = (int(x) for x in match["when"].split("-"))
-            occurred = date(2000 + yy, mth, d)
-        else:
-            d, mth = (int(x) for x in match["posted"].split("-"))
-            # A statement spans ~a month; a later month than the statement's
-            # own belongs to the previous year (December lines in January).
-            occurred = date(stmt_year - (mth > stmt_month), mth, d)
+        occurred = _bn_occurred_on(match, stmt_month, stmt_year)
         desc = match["desc"].strip()
         payer, _, concept = desc.partition("/")
         credits.append(
@@ -102,6 +122,33 @@ def parse_bn_statement(text: str) -> Statement:
             )
         )
     return Statement(account, owner, credits, unparsed)
+
+
+def parse_bn_statement_debits(text: str) -> list[Movement]:
+    """Debits (``-`` lines) of one BN statement's extracted text -- the
+    owner's own card/transfer spend. No payer to split out, unlike credits:
+    the whole description is the merchant/concept, e.g. ``R INSTITUCIONAL
+    TEC CA CARTAGO CRI``."""
+    stmt_month, stmt_year, account, _owner = _bn_statement_header(text)
+
+    debits = []
+    for raw in text.splitlines():
+        line = re.sub(r"\s+", " ", raw).strip()
+        match = _BN_LINE.match(line)
+        if not match or match["sign"] != "-":
+            continue
+        occurred = _bn_occurred_on(match, stmt_month, stmt_year)
+        debits.append(
+            Movement(
+                source="bn_statement_debit",
+                occurred_on=occurred,
+                amount=_amount(match["amount"]),
+                counterparty="",
+                description=match["desc"].strip(),
+                external_ref=f"{account}:{match['number']}:{occurred.isoformat()}:{match['amount']}:D",
+            )
+        )
+    return debits
 
 
 def pdf_text(pdf_bytes: bytes) -> str:
@@ -152,6 +199,69 @@ def parse_wink_send(text: str, message_id: str) -> Movement | None:
     )
 
 
+# --- BAC "Notificación de transacción" --------------------------------------
+
+_BAC_LABELS = [
+    "Comercio",
+    "Ciudad y país",
+    "Fecha",
+    "MASTER",
+    "VISA",
+    "Autorización",
+    "Referencia",
+    "Tipo de Transacción",
+    "Monto",
+]
+_BAC_MONTHS = {
+    "Jan": 1, "Feb": 2, "Mar": 3, "Apr": 4, "May": 5, "Jun": 6,
+    "Jul": 7, "Aug": 8, "Sep": 9, "Oct": 10, "Nov": 11, "Dec": 12,
+}
+# BAC's own reversal/refund labels aren't confirmed from a real sample yet --
+# this is a best-effort guard so a refund doesn't inflate the expense total;
+# verify against a real reversal email and extend this set if it's named
+# differently.
+_BAC_REFUND_TYPES = {"ANULACION", "REVERSO", "DEVOLUCION"}
+
+
+def _strip_html(markup: str) -> str:
+    text = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", markup)
+    text = re.sub(r"(?s)<[^>]+>", " ", text)
+    return re.sub(r"\s+", " ", unescape(text)).strip()
+
+
+def _bac_field(text: str, label: str) -> str | None:
+    stop = "|".join(re.escape(lbl) + ":" for lbl in _BAC_LABELS if lbl != label)
+    m = re.search(rf"{re.escape(label)}:\s*(.+?)(?=(?:{stop})|$)", text)
+    return m.group(1).strip() if m else None
+
+
+def parse_bac_transaction(html: str, message_id: str) -> Movement | None:
+    """One BAC "Notificación de transacción" email (HTML body) -> a Movement.
+
+    None when the amount isn't in CRC (no cross-currency total yet) or the
+    transaction type looks like a reversal -- see ``_BAC_REFUND_TYPES``."""
+    text = _strip_html(html)
+    comercio = _bac_field(text, "Comercio")
+    fecha = _bac_field(text, "Fecha")
+    tipo = (_bac_field(text, "Tipo de Transacción") or "").strip().upper()
+    monto = _bac_field(text, "Monto")
+    if not (comercio and fecha and monto) or tipo in _BAC_REFUND_TYPES:
+        return None
+    money = re.match(r"([A-Z]{3})\s*([\d,]+\.\d{2})", monto)
+    when = re.match(r"([A-Za-z]{3})\s+(\d{1,2}),\s*(\d{4}),\s*(\d{2}):(\d{2})", fecha)
+    if not money or money.group(1) != "CRC" or not when or when.group(1) not in _BAC_MONTHS:
+        return None
+    occurred = date(int(when.group(3)), _BAC_MONTHS[when.group(1)], int(when.group(2)))
+    return Movement(
+        source="bac_transaction",
+        occurred_on=occurred,
+        amount=_amount(money.group(2)),
+        counterparty=comercio,
+        description=tipo.title() or "Compra",
+        external_ref=message_id,
+    )
+
+
 # --- Gmail (IMAP) ------------------------------------------------------------
 
 
@@ -163,12 +273,21 @@ def _text_body(msg: email.message.Message) -> str:
     return ""
 
 
+def _html_body(msg: email.message.Message) -> str:
+    for part in msg.walk():
+        if part.get_content_type() == "text/html" and not part.get_filename():
+            raw = part.get_payload(decode=True) or b""
+            return raw.decode(part.get_content_charset() or "utf-8", "replace")
+    return ""
+
+
 @dataclass
 class MailItem:
     message_id: str
-    kind: str  # 'bn_statement' | 'wink_send'
+    kind: str  # 'bn_statement' | 'wink_send' | 'bac_transaction'
     subject: str
     text: str | None = None          # Wink body
+    html: str | None = None          # BAC body
     pdfs: list[bytes] | None = None  # BN statement PDFs
 
 
@@ -195,15 +314,25 @@ class GmailReader:
         _, data = self._imap.search(None, "SINCE", since_imap, "X-GM-RAW", f'"{query}"')
         return data[0].split()
 
-    def items(self, since: date, skip: set[str]) -> Iterator[MailItem]:
-        """BN statements and Wink transfer notifications since `since`,
-        skipping Message-IDs in `skip`. ASCII-only queries: IMAP search
-        rejects accents, so subjects are filtered here instead."""
-        wanted = [
-            ("bn_statement", f"from:{BN_SENDER} subject:estado", "estado de cuenta"),
-            ("wink_send", f"from:{WINK_SENDER}", "notificación de envío"),
-        ]
-        for kind, query, subject_has in wanted:
+    DEFAULT_WANTED = [
+        ("bn_statement", f"from:{BN_SENDER} subject:estado", "estado de cuenta"),
+        ("wink_send", f"from:{WINK_SENDER}", "notificación de envío"),
+    ]
+    EXPENSE_WANTED = DEFAULT_WANTED + [
+        ("bac_transaction", f"from:{BAC_SENDER}", "notificación de transacción"),
+    ]
+
+    def items(
+        self, since: date, skip: set[str], wanted: list[tuple[str, str, str]] | None = None
+    ) -> Iterator[MailItem]:
+        """Mail items since `since`, skipping Message-IDs in `skip`.
+
+        `wanted` is a list of (kind, IMAP query, lowercase subject substring)
+        tuples; defaults to BN statements + Wink sends (``DEFAULT_WANTED``).
+        scripts/nightly_expense_report.py passes ``EXPENSE_WANTED`` to also
+        read BAC transactions. ASCII-only queries: IMAP search rejects
+        accents, so subjects are filtered here instead."""
+        for kind, query, subject_has in wanted or self.DEFAULT_WANTED:
             for uid in self._search(since, query):
                 _, data = self._imap.fetch(uid, "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID SUBJECT)])")
                 headers = email.message_from_bytes(data[0][1])
@@ -215,6 +344,8 @@ class GmailReader:
                 msg = email.message_from_bytes(data[0][1])
                 if kind == "wink_send":
                     yield MailItem(message_id, kind, subject, text=_text_body(msg))
+                elif kind == "bac_transaction":
+                    yield MailItem(message_id, kind, subject, html=_html_body(msg))
                 else:
                     pdfs = [
                         p.get_payload(decode=True)

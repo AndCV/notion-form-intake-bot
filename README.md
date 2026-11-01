@@ -34,6 +34,7 @@ Phone ──HTTPS──> Render (free web service, Docker: FastAPI + Jinja2)
 GitHub Actions: tests on every push (Render deploys only when they pass)
                 + a ping every 10 minutes so the free instance doesn't sleep
                 + hourly: read payment emails from Gmail (IMAP, read-only) -> Neon
+                + nightly: close the owner's personal spend (BN/Wink/BAC) -> Telegram bot
 ```
 
 ## Structure
@@ -51,8 +52,10 @@ lib/zoho_api.py              # Zoho Mail REST API client (stdlib only)
 lib/invoicing.py             # invoice and receipt PDFs (WeasyPrint)
 lib/ledger.py                # earnings summary + CSV export
 lib/workbook_csv.py          # reads the old workbook's CSV export
-lib/payment_mail.py          # reads BN statements and Wink transfer emails (Gmail IMAP)
+lib/payment_mail.py          # reads BN statements, Wink and BAC transaction emails (Gmail IMAP)
 lib/payments.py              # matches those movements to services
+lib/expenses.py              # nightly personal-spend closing: groups by date, formats the Telegram text
+lib/telegram.py              # sends a Telegram bot message (free, no business account)
 lib/auth.py                  # scrypt password hashing
 db/schema.sql                # schema (idempotent; applied on every start)
 templates/invoice.html       # invoice/receipt layout (shared letterhead)
@@ -62,11 +65,13 @@ scripts/import_2026.py       # one-time import of the 2026 workbook
 scripts/import_contacts.py   # loads client emails (Notion export) so the form fills them in
 scripts/hash_password.py     # turns APP_PASSWORD into APP_PASSWORD_HASH in .env
 scripts/sync_payments.py     # reads new payment emails and matches them (hourly)
+scripts/nightly_expense_report.py   # closes yesterday's personal spend, sends it over Telegram
 scripts/generate_sample_invoice.py  # sample invoice PDF, no external calls
 Dockerfile                   # the image Render runs
 .github/workflows/tests.yml  # pytest + a disposable Postgres
 .github/workflows/keepalive.yml     # pings /healthz every 10 minutes
 .github/workflows/payments.yml      # runs sync_payments.py hourly
+.github/workflows/expense_report.yml  # runs nightly_expense_report.py nightly
 ```
 
 ## Key decisions
@@ -116,6 +121,23 @@ Dockerfile                   # the image Render runs
 - **The repo is public; the earnings data isn't.** `*.csv` / `*.xlsx` are
   gitignored, and tests use synthetic data. The real-workbook tests run only
   when `LEDGER_CSV` points at a local file.
+- **Nightly personal-spend closing is separate from the client-payment
+  business.** `scripts/nightly_expense_report.py` reads BN statement debits,
+  Wink sends and BAC transactions for personal spend and messages the
+  total to a Telegram bot (`lib/telegram.py`); it never writes
+  `payment_events`. Not WhatsApp: Meta's Cloud API needs a Meta Business
+  Account, and CallMeBot (the free no-business-account WhatsApp
+  workaround) closed its registration (2026-11-01). A Wink send already recorded
+  there as a collaborator payout is excluded, so the business and personal
+  totals never double-count the same transfer. Stateless by design: each
+  run re-reads exactly yesterday's emails (a fixed one-day window) instead
+  of tracking a processed-message table — a closing is naturally scoped to
+  one day, so there's nothing to replay. BN's statement arrives on its own
+  monthly schedule, not the day of the transaction, so the script searches
+  further back for it and keeps only the lines that land on yesterday.
+  BAC's reversal/refund wording isn't confirmed from a real sample yet
+  (`_BAC_REFUND_TYPES` in `lib/payment_mail.py`) — verify against a real
+  one and extend it if BAC names it differently.
 
 ## Setup
 
