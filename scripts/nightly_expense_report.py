@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import os
 import sys
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -77,7 +77,13 @@ def main() -> int:
         return 1
 
     tz = ZoneInfo(os.environ.get("TIMEZONE", "America/Costa_Rica"))
-    yesterday = datetime.now(tz).date() - timedelta(days=1)
+    override_date = os.environ.get("OVERRIDE_DATE")
+    # OVERRIDE_DATE re-closes a past day (and its month-end, if it's the
+    # month's last day) -- e.g. to resend a corrected total after a parser
+    # fix. Unset on every normal nightly run, where `yesterday` is today - 1.
+    yesterday = date.fromisoformat(override_date) if override_date else (
+        datetime.now(tz).date() - timedelta(days=1)
+    )
     month_start = yesterday.replace(day=1)
     is_month_end = (yesterday + timedelta(days=1)).day == 1
 

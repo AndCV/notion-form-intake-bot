@@ -135,12 +135,12 @@ def format_month_total(report: ExpenseReport, month_start: date, currency_symbol
     header = f"*Cierre de {month_name} {month_start.year}*"
     if not report.days:
         return f"{header}: sin movimientos."
-    by_source: dict[str, Decimal] = defaultdict(Decimal)
+    by_label: dict[str, Decimal] = defaultdict(Decimal)
     for day in report.days:
         for m in day.movements:
-            by_source[m.source] += m.amount
+            by_label[SOURCE_LABELS.get(m.source, m.source)] += m.amount
     lines = [header]
-    for source, amount in sorted(by_source.items()):
-        lines.append(f"  {SOURCE_LABELS.get(source, source)}: {currency_symbol}{amount:,.2f}")
+    for label, amount in sorted(by_label.items()):
+        lines.append(f"  {label}: {currency_symbol}{amount:,.2f}")
     lines.append(f"*Total del mes: {currency_symbol}{report.total:,.2f}*")
     return "\n".join(lines)

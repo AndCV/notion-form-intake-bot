@@ -9,7 +9,11 @@ name: Nightly expense report
 on:
   schedule:
     - cron: "30 6 * * *"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "Re-close this day (YYYY-MM-DD) instead of yesterday -- optional, for resending a corrected total"
+        required: false
 
 concurrency:
   group: expense-report
@@ -51,3 +55,4 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           OWN_IBAN_ACCOUNTS: ${{ secrets.OWN_IBAN_ACCOUNTS }}
+          OVERRIDE_DATE: ${{ github.event.inputs.date }}

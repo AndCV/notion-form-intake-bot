@@ -164,6 +164,7 @@ def test_format_month_total_breaks_down_by_card():
         [
             _movement("bac_transaction", date(2026, 10, 5), "13449.99"),
             _movement("wink_send", date(2026, 10, 12), "5000.00", external_ref="<w2@x>"),
+            _movement("wink_transaction", date(2026, 10, 13), "2000.00", external_ref="<w3@x>"),
             _movement("bn_statement_debit", date(2026, 10, 31), "8250.50"),
         ],
         business_wink_refs=set(),
@@ -172,5 +173,7 @@ def test_format_month_total_breaks_down_by_card():
     assert message.startswith("*Cierre de Octubre 2026*")
     assert "  BAC: ₡13,449.99" in message
     assert "  BN: ₡8,250.50" in message
-    assert "  Wink: ₡5,000.00" in message
-    assert message.endswith("*Total del mes: ₡26,700.49*")
+    # wink_send and wink_transaction share the "Wink" label and merge into one line.
+    assert "  Wink: ₡7,000.00" in message
+    assert message.count("Wink:") == 1
+    assert message.endswith("*Total del mes: ₡28,700.49*")
