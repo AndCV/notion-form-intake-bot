@@ -6,8 +6,8 @@ month's last day, also sends a month-total summary.
 
 Runs nightly from .github/workflows/expense_report.yml, shortly after
 midnight (TIMEZONE, default America/Costa_Rica). Reads BN statement debits,
-Wink sends and BAC transactions (lib/payment_mail.py) for the day that just
-ended, excludes Wink sends already recorded as collaborator payouts in
+Wink sends, Wink card transactions and BAC transactions (lib/payment_mail.py)
+for the day that just ended, excludes Wink sends already recorded as collaborator payouts in
 payment_events (read-only -- see lib/expenses.py), and messages the total
 to a Telegram bot (lib/telegram.py) -- not WhatsApp: Meta's Cloud API needs
 a Business Account, and CallMeBot (the free workaround) closed registration.
@@ -46,6 +46,7 @@ from lib.payment_mail import (
     parse_bac_transaction,
     parse_bn_statement_debits,
     parse_wink_send,
+    parse_wink_transaction,
     pdf_text,
 )
 
@@ -97,7 +98,7 @@ def main() -> int:
     reader = GmailReader(os.environ["GMAIL_ADDRESS"], os.environ["GMAIL_APP_PASSWORD"])
     movements = []
     owner = ""
-    stats = {"emails": 0, "debits": 0, "sends": 0, "bac": 0}
+    stats = {"emails": 0, "debits": 0, "sends": 0, "bac": 0, "wink_txn": 0}
     try:
         # BN's statement email isn't sent the day of the transaction -- it's
         # monthly, on BN's own schedule -- so "SINCE range_start" would almost
@@ -115,7 +116,11 @@ def main() -> int:
                 movements += debits
 
         # Wink and BAC notify immediately, same day as the transaction.
-        same_day_wanted = [GmailReader.DEFAULT_WANTED[1], GmailReader.EXPENSE_WANTED[2]]
+        same_day_wanted = [
+            GmailReader.DEFAULT_WANTED[1],
+            GmailReader.EXPENSE_WANTED[2],
+            GmailReader.EXPENSE_WANTED[3],
+        ]
         for item in reader.items(range_start, skip=set(), wanted=same_day_wanted):
             stats["emails"] += 1
             if item.kind == "wink_send":
@@ -123,6 +128,11 @@ def main() -> int:
                 if send and range_start <= send.occurred_on <= yesterday:
                     stats["sends"] += 1
                     movements.append(send)
+            elif item.kind == "wink_transaction":
+                wink_txn = parse_wink_transaction(item.text or "", item.message_id)
+                if wink_txn and range_start <= wink_txn.occurred_on <= yesterday:
+                    stats["wink_txn"] += 1
+                    movements.append(wink_txn)
             elif item.kind == "bac_transaction":
                 txn = parse_bac_transaction(item.html or "", item.message_id)
                 if txn and range_start <= txn.occurred_on <= yesterday:

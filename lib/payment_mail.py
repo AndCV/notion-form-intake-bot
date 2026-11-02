@@ -11,7 +11,9 @@ Three senders are read:
   no payer to split out. BN sends no per-transfer email, so movements show
   up once a month.
 - Wink's "Notificación de envío" (transacciones@holawink.com): one email per
-  transfer the owner sends, with recipient name, amount and date.
+  transfer the owner sends, with recipient name, amount and date. Wink also
+  sends a "Notificación de transacción" (same sender) for card purchases --
+  Comercio/Monto de la compra/Fecha y hora, parsed by parse_wink_transaction.
 - BAC's "Notificación de transacción" (notificacionbac@baccredomatic.cr,
   HTML): one email per card transaction (Comercio/Fecha/Monto/Tipo de
   Transacción table), sent the moment it's authorized.
@@ -45,7 +47,7 @@ BAC_SENDER = "notificacionbac@baccredomatic.cr"
 
 @dataclass
 class Movement:
-    source: str  # 'bn_statement' | 'bn_statement_debit' | 'wink_send' | 'bac_transaction'
+    source: str  # 'bn_statement' | 'bn_statement_debit' | 'wink_send' | 'wink_transaction' | 'bac_transaction'
     occurred_on: date
     amount: Decimal
     counterparty: str
@@ -212,6 +214,33 @@ def parse_wink_send(text: str, message_id: str) -> Movement | None:
     )
 
 
+# --- Wink "Notificación de transacción" (card purchase) --------------------
+
+
+def parse_wink_transaction(text: str, message_id: str) -> Movement | None:
+    """One Wink "Notificación de transacción" email (card purchase, plain
+    text) -> a Movement, or None when a required field is missing."""
+    comercio = _wink_field(text, "Comercio")
+    monto = _wink_field(text, "Monto de la compra")
+    when = _wink_field(text, "Fecha y hora")
+    if not (comercio and monto and when):
+        return None
+    amount_match = re.search(r"[\d,]+\.\d{2}", monto)
+    date_match = re.search(r"(\d{2})/(\d{2})/(\d{4})", when)
+    if not (amount_match and date_match):
+        return None
+    d, m, y = (int(x) for x in date_match.groups())
+    card = _wink_field(text, "Tarjeta utilizada")
+    return Movement(
+        source="wink_transaction",
+        occurred_on=date(y, m, d),
+        amount=_amount(amount_match.group(0)),
+        counterparty=comercio.strip(),
+        description=f"Compra con tarjeta Wink ({card})" if card else "Compra con tarjeta Wink",
+        external_ref=message_id,
+    )
+
+
 # --- BAC "Notificación de transacción" --------------------------------------
 
 _BAC_LABELS = [
@@ -333,6 +362,7 @@ class GmailReader:
     ]
     EXPENSE_WANTED = DEFAULT_WANTED + [
         ("bac_transaction", f"from:{BAC_SENDER}", "notificación de transacción"),
+        ("wink_transaction", f"from:{WINK_SENDER}", "notificación de transacción"),
     ]
 
     def items(
@@ -355,7 +385,7 @@ class GmailReader:
                     continue
                 _, data = self._imap.fetch(uid, "(BODY.PEEK[])")
                 msg = email.message_from_bytes(data[0][1])
-                if kind == "wink_send":
+                if kind in ("wink_send", "wink_transaction"):
                     yield MailItem(message_id, kind, subject, text=_text_body(msg))
                 elif kind == "bac_transaction":
                     yield MailItem(message_id, kind, subject, html=_html_body(msg))

@@ -5,7 +5,11 @@ details (merchant, amount) that don't need to live in the repo."""
 from datetime import date
 from decimal import Decimal
 
-from lib.payment_mail import parse_bac_transaction, parse_bn_statement_debits
+from lib.payment_mail import (
+    parse_bac_transaction,
+    parse_bn_statement_debits,
+    parse_wink_transaction,
+)
 
 STATEMENT_WITH_DEBITS = """Datos del cliente
 Nombre: ANDRES DAVID CUBILLO VILLALOBOS
@@ -49,6 +53,41 @@ def test_bn_statement_debits_are_the_owners_own_spend():
     ]
     assert all(d.source == "bn_statement_debit" for d in debits)
     assert len({d.external_ref for d in debits}) == 3
+
+
+WINK_TRANSACTION = """Notificación de transacción
+
+¡Hola Winker!
+
+Se registró una transacción con tu tarjeta. Estos son los detalles de la transacción:
+
+Tarjeta utilizada: Terminada en 9900
+Monto de la compra: 5,000.00
+Comercio: RESTAURANTE DEMO SAN JOSE CR
+Fecha y hora: 15/10/2026, 01:30 PM (hora de Costa Rica)
+"""
+
+
+def test_wink_transaction_reads_merchant_amount_and_date():
+    """protects: a Wink card-purchase email's Comercio/Monto de la compra/Fecha y hora
+      fields become a Movement, separately from parse_wink_send's transfer emails;
+    fails_when: the merchant, amount or date is missing or misparsed;
+    no_claim: verified once against a real Wink card-transaction email's field layout
+      (values here are synthetic)."""
+    m = parse_wink_transaction(WINK_TRANSACTION, "<winktxn1@x>")
+
+    assert m.counterparty == "RESTAURANTE DEMO SAN JOSE CR"
+    assert m.amount == Decimal("5000.00")
+    assert m.occurred_on == date(2026, 10, 15)
+    assert m.source == "wink_transaction" and m.external_ref == "<winktxn1@x>"
+
+
+def test_wink_transaction_missing_fields_returns_none():
+    """protects: a Wink "Notificación de envío" (transfer) or unrelated email doesn't
+      become a phantom card-purchase Movement;
+    fails_when: a required field (Comercio/Monto de la compra/Fecha y hora) is missing
+      but a Movement is built anyway."""
+    assert parse_wink_transaction("Hola Winker, gracias por usar Wink.", "<winktxn2@x>") is None
 
 
 def test_bac_transaction_reads_merchant_amount_and_date():
