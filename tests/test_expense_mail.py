@@ -8,6 +8,7 @@ from decimal import Decimal
 from lib.payment_mail import (
     parse_bac_transaction,
     parse_bn_statement_debits,
+    parse_wink_bill_payment,
     parse_wink_transaction,
 )
 
@@ -88,6 +89,47 @@ def test_wink_transaction_missing_fields_returns_none():
     fails_when: a required field (Comercio/Monto de la compra/Fecha y hora) is missing
       but a Movement is built anyway."""
     assert parse_wink_transaction("Hola Winker, gracias por usar Wink.", "<winktxn2@x>") is None
+
+
+WINK_BILL_PAYMENT = """Se ha procesado tu pago
+
+¡Hola Andres!
+
+Tu pago ha sido procesado correctamente. Acá te dejamos los detalles de la transacción:
+*Servicio:* Liberty Postpago &amp; Servicios
+*Monto debitado:* 51,592.58 colones
+*Cuenta de origen:* CR19081400011036090690
+*Número de comprobante:* 261102125
+*Fecha del pago:* 02/11/2026
+
+*Importante:* Este mensaje se genera de forma automática, por favor no respondás a este correo.
+"""
+
+
+def test_wink_bill_payment_reads_service_amount_and_date():
+    """protects: a Wink "Pago de servicios públicos" email's Servicio/Monto debitado/Fecha
+      del pago fields become a Movement, separately from parse_wink_send's transfer emails
+      and parse_wink_transaction's card purchases; an HTML entity in the service name
+      (&amp;) is unescaped;
+    fails_when: the service, amount or date is missing or misparsed, or the service name
+      keeps its raw HTML entity;
+    no_claim: verified once against a real Wink bill-pay email's field layout (values here
+      are synthetic)."""
+    m = parse_wink_bill_payment(WINK_BILL_PAYMENT, "<winkbill1@x>")
+
+    assert m.counterparty == "Liberty Postpago & Servicios"
+    assert m.amount == Decimal("51592.58")
+    assert m.occurred_on == date(2026, 11, 2)
+    assert m.source == "wink_bill_payment" and m.external_ref == "<winkbill1@x>"
+    assert "261102125" in m.description
+
+
+def test_wink_bill_payment_missing_fields_returns_none():
+    """protects: a Wink "Notificación de envío" (transfer) or "Notificación de transacción"
+      (card purchase) email doesn't become a phantom bill-payment Movement;
+    fails_when: a required field (Servicio/Monto debitado/Fecha del pago) is missing but a
+      Movement is built anyway."""
+    assert parse_wink_bill_payment("Hola Winker, gracias por usar Wink.", "<winkbill2@x>") is None
 
 
 def test_bac_transaction_reads_merchant_amount_and_date():

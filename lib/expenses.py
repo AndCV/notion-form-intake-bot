@@ -29,6 +29,7 @@ SOURCE_LABELS = {
     "bn_statement_debit": "BN",
     "wink_send": "Wink",
     "wink_transaction": "Wink",
+    "wink_bill_payment": "Wink",
     "bac_transaction": "BAC",
 }
 
