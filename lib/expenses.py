@@ -67,6 +67,14 @@ def close(
     parse_wink_send) whose IBAN is in `own_ibans` -- that case has no name
     to check against is_owner, so it has to be confirmed by hand once and
     listed (OWN_IBAN_ACCOUNTS in .env.example) rather than inferred.
+
+    A BN public-utility bill payment ("PAGO CNFL 27561844", "PAGO AYA ...")
+    has that same NAME/CONCEPT shape -- BN lists the account holder as payer
+    for a bill-pay debit just like it does for a self-transfer -- but it's
+    real spend, so it's kept even when the counterparty matches the owner:
+    only a self-transfer's description is excluded, never one starting with
+    "PAGO " (case-insensitive).
+
     `owner` is the BN statement holder's name from
     parse_bn_statement_debits; pass "" to skip the name check (e.g. no BN
     statement was read this run)."""
@@ -75,7 +83,13 @@ def close(
         if m.source == "wink_send" and m.external_ref in business_wink_refs:
             excluded_business += 1
             continue
-        if m.source in ("bn_statement_debit", "wink_send") and owner and is_owner(m.counterparty, owner):
+        is_bill_payment = m.source == "bn_statement_debit" and m.description.upper().startswith("PAGO ")
+        if (
+            m.source in ("bn_statement_debit", "wink_send")
+            and owner
+            and is_owner(m.counterparty, owner)
+            and not is_bill_payment
+        ):
             excluded_self += 1
             continue
         if m.source == "wink_send" and m.counterparty.removeprefix("Cuenta ").strip() in own_ibans:

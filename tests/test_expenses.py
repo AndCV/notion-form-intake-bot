@@ -95,6 +95,37 @@ def test_close_excludes_self_transfers_on_bn_and_wink():
     assert no_owner_report.excluded_self_transfer_count == 0
 
 
+def test_close_keeps_bn_bill_payments_despite_owner_shaped_counterparty():
+    """protects: a BN public-utility bill payment ("PAGO CNFL ...") counts as spend even
+      though BN lists the account holder as payer, same NAME/CONCEPT shape as a real
+      self-transfer;
+    fails_when: a utility bill payment is dropped from the total like a self-transfer;
+    no_claim: none beyond protects."""
+    bill_payment = _movement(
+        "bn_statement_debit",
+        date(2026, 10, 14),
+        "12370.00",
+        counterparty="CUBILLO VILLALOBOS ANDRE",
+        description="PAGO CNFL 27561844",
+    )
+    self_transfer = _movement(
+        "bn_statement_debit",
+        date(2026, 10, 14),
+        "50000.00",
+        counterparty="CUBILLO VILLALOBOS A",
+        description="RECARGA DE DINERO OD",
+    )
+
+    report = close(
+        [bill_payment, self_transfer],
+        business_wink_refs=set(),
+        owner="ANDRES DAVID CUBILLO VILLALOBOS",
+    )
+
+    assert report.total == Decimal("12370.00")
+    assert report.excluded_self_transfer_count == 1
+
+
 def test_close_excludes_wink_sends_to_a_confirmed_own_iban():
     """protects: a Wink send to a bare IBAN ("Cuenta <IBAN>", no name) is excluded only
       when that IBAN is in own_ibans -- it can't be inferred via is_owner, there's no name;
