@@ -1,14 +1,14 @@
 name: Nightly expense report
 
-# Nightly, shortly after midnight Costa Rica time (UTC-6): closes the
-# owner's personal spend for the day that just ended -- BN statement debits,
-# Wink sends and BAC transactions (lib/payment_mail.py) -- and sends the
-# total over Telegram. See scripts/nightly_expense_report.py. Logs show
-# totals only -- this repo is public.
+# Closes the owner's personal spend for a day -- BN statement debits, Wink
+# sends and BAC transactions (lib/payment_mail.py) -- and sends the total
+# over Telegram. See scripts/nightly_expense_report.py. Logs show totals
+# only -- this repo is public.
+#
+# No automatic schedule: run manually (Actions tab > Run workflow) to
+# close yesterday, or a specific day via the `date` input.
 
 on:
-  schedule:
-    - cron: "30 6 * * *"
   workflow_dispatch:
     inputs:
       date:
@@ -21,7 +21,6 @@ concurrency:
 
 permissions:
   contents: read
-  actions: write
 
 jobs:
   report:
@@ -29,12 +28,6 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-
-      # GitHub disables scheduled workflows after 60 days without repo
-      # activity. Re-enabling this one on every run resets that timer.
-      - run: gh api -X PUT repos/${{ github.repository }}/actions/workflows/expense_report.yml/enable
-        env:
-          GH_TOKEN: ${{ github.token }}
 
       - uses: actions/setup-python@v5
         with:
