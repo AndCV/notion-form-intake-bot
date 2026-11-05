@@ -7,8 +7,8 @@ month's last day, also sends a month-total summary.
 Runs nightly from .github/workflows/expense_report.yml, shortly after
 midnight (TIMEZONE, default America/Costa_Rica). Reads BN statement debits,
 BN same-day vouchers, Wink sends, Wink card transactions, Wink bill
-payments and BAC transactions (lib/payment_mail.py) for the day that just
-ended, excludes Wink sends already recorded as collaborator payouts in
+payments, BAC transactions and Apple receipts (lib/payment_mail.py) for the
+day that just ended, excludes Wink sends already recorded as collaborator payouts in
 payment_events (read-only -- see lib/expenses.py), and messages the total
 to a Telegram bot (lib/telegram.py) -- not WhatsApp: Meta's Cloud API needs
 a Business Account, and CallMeBot (the free workaround) closed registration.
@@ -44,6 +44,7 @@ from lib.db import connect
 from lib.expenses import close, format_message, format_month_total
 from lib.payment_mail import (
     GmailReader,
+    parse_apple_receipt,
     parse_bac_transaction,
     parse_bn_statement_debits,
     parse_bn_voucher,
@@ -107,7 +108,10 @@ def main() -> int:
     reader = GmailReader(os.environ["GMAIL_ADDRESS"], os.environ["GMAIL_APP_PASSWORD"])
     movements = []
     owner = ""
-    stats = {"emails": 0, "debits": 0, "sends": 0, "bac": 0, "wink_txn": 0, "wink_bill": 0, "bn_voucher": 0}
+    stats = {
+        "emails": 0, "debits": 0, "sends": 0, "bac": 0, "wink_txn": 0, "wink_bill": 0,
+        "bn_voucher": 0, "apple": 0,
+    }  # fmt: skip
     try:
         # BN's statement email isn't sent the day of the transaction -- it's
         # monthly, on BN's own schedule -- so "SINCE range_start" would almost
@@ -131,6 +135,7 @@ def main() -> int:
             GmailReader.EXPENSE_WANTED[3],
             GmailReader.EXPENSE_WANTED[4],
             GmailReader.EXPENSE_WANTED[5],
+            GmailReader.EXPENSE_WANTED[6],
         ]
         for item in reader.items(range_start, skip=set(), wanted=same_day_wanted):
             stats["emails"] += 1
@@ -159,6 +164,11 @@ def main() -> int:
                 if voucher and range_start <= voucher.occurred_on <= yesterday:
                     stats["bn_voucher"] += 1
                     movements.append(voucher)
+            elif item.kind == "apple_receipt":
+                receipt = parse_apple_receipt(item.text or "", item.message_id)
+                if receipt and range_start <= receipt.occurred_on <= yesterday:
+                    stats["apple"] += 1
+                    movements.append(receipt)
     finally:
         reader.close()
 

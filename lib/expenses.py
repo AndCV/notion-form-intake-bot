@@ -17,7 +17,7 @@ mailbox or a database.
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
 
@@ -32,6 +32,7 @@ SOURCE_LABELS = {
     "wink_transaction": "Wink",
     "wink_bill_payment": "Wink",
     "bac_transaction": "BAC",
+    "apple_receipt": "Apple",
 }
 
 
@@ -48,6 +49,10 @@ class ExpenseReport:
     total: Decimal
     excluded_business_count: int
     excluded_self_transfer_count: int = 0
+    # Non-CRC movements (currently only apple_receipt, in USD): kept as line
+    # items under their day like any other movement, but summed here instead
+    # of into `total` -- see close()'s docstring.
+    foreign_totals: dict[str, Decimal] = field(default_factory=dict)
 
 
 def close(
@@ -79,7 +84,14 @@ def close(
 
     `owner` is the BN statement holder's name from
     parse_bn_statement_debits; pass "" to skip the name check (e.g. no BN
-    statement was read this run)."""
+    statement was read this run).
+
+    A non-CRC movement (currently only apple_receipt, billed in USD) stays
+    in its day's `movements` list like any other line item, but its amount
+    is kept out of `total`/`DayTotal.total` and summed separately into
+    `foreign_totals` instead -- there's no live exchange rate here, so
+    mixing currencies into one number would misstate the total rather than
+    just omit a conversion."""
     personal, excluded_business, excluded_self = [], 0, 0
     for m in movements:
         if m.source == "wink_send" and m.external_ref in business_wink_refs:
@@ -104,15 +116,24 @@ def close(
         by_day[m.occurred_on].append(m)
 
     days = [
-        DayTotal(occurred_on=day, total=sum((m.amount for m in ms), Decimal(0)), movements=ms)
+        DayTotal(
+            occurred_on=day,
+            total=sum((m.amount for m in ms if m.currency == "CRC"), Decimal(0)),
+            movements=ms,
+        )
         for day, ms in sorted(by_day.items())
     ]
     total = sum((d.total for d in days), Decimal(0))
+    foreign_totals: dict[str, Decimal] = defaultdict(Decimal)
+    for m in personal:
+        if m.currency != "CRC":
+            foreign_totals[m.currency] += m.amount
     return ExpenseReport(
         days=days,
         total=total,
         excluded_business_count=excluded_business,
         excluded_self_transfer_count=excluded_self,
+        foreign_totals=dict(foreign_totals),
     )
 
 
@@ -124,11 +145,22 @@ def _where(m: Movement) -> str:
     return m.counterparty or m.description or "(sin detalle)"
 
 
+def _amount_text(m: Movement, currency_symbol: str) -> str:
+    """CRC movements use `currency_symbol`; anything else (currently only
+    apple_receipt, USD) is shown in its own currency code instead of being
+    converted -- see close()'s docstring."""
+    if m.currency == "CRC":
+        return f"{currency_symbol}{m.amount:,.2f}"
+    return f"{m.currency} {m.amount:,.2f}"
+
+
 def format_message(report: ExpenseReport, currency_symbol: str = "₡") -> str:
     """Plain-text summary (Telegram legacy Markdown: *bold*): one line per
     movement (where it went + which card) under each day, then the day and
     grand totals -- still short enough for a single chat message at normal
-    daily volumes."""
+    daily volumes. A day's Subtotal and the grand Total are CRC only; a
+    non-CRC movement still gets its own line, and any foreign-currency
+    totals get a trailing section of their own (see close()'s docstring)."""
     if not report.days:
         return "Cierre de gastos: sin movimientos."
     lines = ["*Cierre de gastos*"]
@@ -136,9 +168,11 @@ def format_message(report: ExpenseReport, currency_symbol: str = "₡") -> str:
         lines.append(f"*{day.occurred_on:%d/%m}*")
         for m in day.movements:
             source = SOURCE_LABELS.get(m.source, m.source)
-            lines.append(f"  • {_where(m)} ({source}): {currency_symbol}{m.amount:,.2f}")
+            lines.append(f"  • {_where(m)} ({source}): {_amount_text(m, currency_symbol)}")
         lines.append(f"  Subtotal: {currency_symbol}{day.total:,.2f}")
     lines.append(f"*Total: {currency_symbol}{report.total:,.2f}*")
+    for currency, amount in sorted(report.foreign_totals.items()):
+        lines.append(f"*Total {currency} (no incluido arriba): {amount:,.2f}*")
     return "\n".join(lines)
 
 
@@ -146,17 +180,27 @@ def format_month_total(report: ExpenseReport, month_start: date, currency_symbol
     """Short monthly summary (Telegram legacy Markdown: *bold*): total spend
     for `month_start`'s month plus a subtotal per card. `report` must cover
     the whole month (scripts/nightly_expense_report.py sends this once, on
-    the last day's nightly run, alongside that day's regular message)."""
+    the last day's nightly run, alongside that day's regular message). The
+    per-card subtotals and the month total are CRC only; a non-CRC source
+    (currently only apple_receipt) gets its own per-currency line instead of
+    being mixed in, same reasoning as close()'s docstring."""
     month_name = MONTH_NAMES[month_start.month - 1]
     header = f"*Cierre de {month_name} {month_start.year}*"
     if not report.days:
         return f"{header}: sin movimientos."
     by_label: dict[str, Decimal] = defaultdict(Decimal)
+    by_label_foreign: dict[tuple[str, str], Decimal] = defaultdict(Decimal)
     for day in report.days:
         for m in day.movements:
-            by_label[SOURCE_LABELS.get(m.source, m.source)] += m.amount
+            label = SOURCE_LABELS.get(m.source, m.source)
+            if m.currency == "CRC":
+                by_label[label] += m.amount
+            else:
+                by_label_foreign[(label, m.currency)] += m.amount
     lines = [header]
     for label, amount in sorted(by_label.items()):
         lines.append(f"  {label}: {currency_symbol}{amount:,.2f}")
+    for (label, currency), amount in sorted(by_label_foreign.items()):
+        lines.append(f"  {label} ({currency}): {amount:,.2f}")
     lines.append(f"*Total del mes: {currency_symbol}{report.total:,.2f}*")
     return "\n".join(lines)

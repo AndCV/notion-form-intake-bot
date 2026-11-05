@@ -9,7 +9,8 @@ from lib.payment_mail import Movement
 
 
 def _movement(
-    source, occurred_on, amount, external_ref="<x@x>", counterparty="SOME MERCHANT", description=""
+    source, occurred_on, amount, external_ref="<x@x>", counterparty="SOME MERCHANT", description="",
+    currency="CRC",
 ) -> Movement:
     return Movement(
         source=source,
@@ -18,6 +19,7 @@ def _movement(
         counterparty=counterparty,
         description=description,
         external_ref=external_ref,
+        currency=currency,
     )
 
 
@@ -151,6 +153,26 @@ def test_close_excludes_wink_sends_to_a_confirmed_own_iban():
     assert report.excluded_self_transfer_count == 1
 
 
+def test_close_keeps_non_crc_movements_out_of_the_crc_total():
+    """protects: a non-CRC movement (apple_receipt, USD) stays as a line item under its
+      day but doesn't inflate DayTotal.total/report.total -- it's summed separately into
+      report.foreign_totals instead, per currency;
+    fails_when: the USD amount leaks into the CRC total, or it's dropped from the day's
+      movements list entirely instead of just being excluded from the sum;
+    no_claim: none beyond protects."""
+    crc = _movement("bac_transaction", date(2026, 11, 3), "8500.00")
+    usd = _movement(
+        "apple_receipt", date(2026, 11, 3), "9.99", external_ref="<apple1@x>",
+        counterparty="iCloud+ con 2 TB (mensual)", currency="USD",
+    )
+
+    report = close([crc, usd], business_wink_refs=set())
+
+    assert report.total == Decimal("8500.00")
+    assert report.foreign_totals == {"USD": Decimal("9.99")}
+    assert len(report.days[0].movements) == 2
+
+
 def test_format_message_empty_and_populated():
     """protects: each movement shows its merchant and card, days get a subtotal, the
       message ends with the grand total, and a BN debit (no counterparty) falls back to
@@ -183,6 +205,29 @@ def test_format_message_empty_and_populated():
     assert message.endswith("*Total: ₡10,000.00*")
 
 
+def test_format_message_shows_non_crc_movements_in_their_own_currency():
+    """protects: an apple_receipt (USD) line shows "USD 9.99", not a colón-symbol amount,
+      its day's Subtotal/the grand Total stay CRC only, and a trailing "Total USD" line
+      reports the foreign sum separately -- see close()'s docstring;
+    fails_when: the USD amount is shown with "₡", leaks into Subtotal/Total, or the
+      trailing foreign-total line is missing."""
+    report = close(
+        [
+            _movement("bac_transaction", date(2026, 11, 3), "8500.00", counterparty="LIBRERIA UNIVERSAL"),
+            _movement(
+                "apple_receipt", date(2026, 11, 3), "9.99", external_ref="<apple1@x>",
+                counterparty="iCloud+ con 2 TB (mensual)", currency="USD",
+            ),
+        ],
+        business_wink_refs=set(),
+    )
+    message = format_message(report)
+
+    assert "  • iCloud+ con 2 TB (mensual) (Apple): USD 9.99" in message
+    assert "  Subtotal: ₡8,500.00" in message
+    assert message.endswith("*Total: ₡8,500.00*\n*Total USD (no incluido arriba): 9.99*")
+
+
 def test_format_month_total_breaks_down_by_card():
     """protects: the month-end message names the Spanish month, sums per card
       (BN/Wink/BAC) and ends with the grand total;
@@ -208,3 +253,25 @@ def test_format_month_total_breaks_down_by_card():
     assert "  Wink: ₡7,000.00" in message
     assert message.count("Wink:") == 1
     assert message.endswith("*Total del mes: ₡28,700.49*")
+
+
+def test_format_month_total_shows_non_crc_sources_in_their_own_currency():
+    """protects: an apple_receipt (USD) source gets its own "Apple (USD): 9.99" line in
+      the month breakdown instead of being summed into a CRC card label, and the month
+      total stays CRC only;
+    fails_when: the USD amount is mixed into a CRC subtotal/the month total, or its line
+      is missing from the breakdown."""
+    report = close(
+        [
+            _movement("bac_transaction", date(2026, 11, 5), "8500.00"),
+            _movement(
+                "apple_receipt", date(2026, 11, 3), "9.99", external_ref="<apple1@x>", currency="USD"
+            ),
+        ],
+        business_wink_refs=set(),
+    )
+    message = format_month_total(report, date(2026, 11, 1))
+
+    assert "  BAC: ₡8,500.00" in message
+    assert "  Apple (USD): 9.99" in message
+    assert message.endswith("*Total del mes: ₡8,500.00*")

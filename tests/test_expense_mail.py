@@ -6,6 +6,7 @@ from datetime import date
 from decimal import Decimal
 
 from lib.payment_mail import (
+    parse_apple_receipt,
     parse_bac_transaction,
     parse_bn_statement_debits,
     parse_bn_voucher,
@@ -201,3 +202,66 @@ def test_bn_voucher_missing_fields_returns_none():
     fails_when: a required field (merchant+date block, NRO. AUT, TOTAL) is missing but a
       Movement is built anyway."""
     assert parse_bn_voucher("Reciba un cordial saludo de parte del Banco Nacional.", "<bnvoucher2@x>") is None
+
+
+APPLE_RECEIPT = """Recibo
+
+3 de noviembre de 2026
+
+ID del pedido:
+
+MQ5T615SKG
+
+Documento:
+
+774213871473
+
+Cuenta de Apple:
+
+demo@example.com
+
+iCloud
+
+iCloud+ con 2 TB (mensual)
+
+Se renovará el 30 de noviembre de 2026
+
+USD 9,99
+
+Facturación y pago
+
+Nombre Demo
+
+Costa Rica
+
+Mastercard ************9117
+
+USD 9,99
+"""
+
+
+def test_apple_receipt_reads_item_amount_currency_and_date():
+    """protects: Apple's "Tu recibo de Apple" email's item name, comma-decimal USD total
+      and receipt date (not the "Se renovará el ..." renewal date, which has the same
+      shape but a prefix) become a Movement with currency="USD";
+    fails_when: the renewal date is read instead of the receipt date, the item name
+      swallows the "iCloud" category line above it, or the comma-decimal amount is
+      misread;
+    no_claim: verified against two real Apple receipt emails' field layout (the account
+      email and name here are synthetic, per this file's module docstring)."""
+    m = parse_apple_receipt(APPLE_RECEIPT, "<apple1@x>")
+
+    assert m.counterparty == "iCloud+ con 2 TB (mensual)"
+    assert m.amount == Decimal("9.99")
+    assert m.currency == "USD"
+    assert m.occurred_on == date(2026, 11, 3)
+    assert m.source == "apple_receipt" and m.external_ref == "<apple1@x>"
+    assert "MQ5T615SKG" in m.description
+
+
+def test_apple_receipt_missing_fields_returns_none():
+    """protects: an unrelated Apple email (e.g. a sign-in alert) doesn't become a
+      phantom Movement;
+    fails_when: a required field (receipt date, item+amount) is missing but a Movement
+      is built anyway."""
+    assert parse_apple_receipt("Tu ID de Apple se usó para iniciar sesión.", "<apple2@x>") is None

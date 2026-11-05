@@ -24,12 +24,17 @@ Three senders are read:
 - BAC's "Notificación de transacción" (notificacionbac@baccredomatic.cr,
   HTML): one email per card transaction (Comercio/Fecha/Monto/Tipo de
   Transacción table), sent the moment it's authorized.
+- Apple's "Tu recibo de Apple" (no_reply@email.apple.com): one email per
+  purchase or subscription renewal, with the item name, receipt date, order
+  ID and a USD total (comma decimal, e.g. ``9,99``), parsed by
+  parse_apple_receipt. Billed in USD regardless of country -- never
+  converted to CRC, see lib.expenses.
 
 scripts/sync_payments.py reads BN credits + Wink sends for the client-payment
 business (lib/payments.py). scripts/nightly_expense_report.py reads BN
-debits + Wink sends + BAC transactions for the owner's personal spend
-closing (lib/expenses.py) -- a separate, read-only concern over the same
-mailbox; it never writes payment_events.
+debits + Wink sends + BAC transactions + Apple receipts for the owner's
+personal spend closing (lib/expenses.py) -- a separate, read-only concern
+over the same mailbox; it never writes payment_events.
 
 Parsing is pure (text in, records out) so it's tested without a mailbox.
 """
@@ -54,12 +59,17 @@ BAC_SENDER = "notificacionbac@baccredomatic.cr"
 
 @dataclass
 class Movement:
-    source: str  # 'bn_statement' | 'bn_statement_debit' | 'bn_voucher' | 'wink_send' | 'wink_transaction' | 'wink_bill_payment' | 'bac_transaction'
+    source: str  # 'bn_statement' | 'bn_statement_debit' | 'bn_voucher' | 'wink_send' | 'wink_transaction' | 'wink_bill_payment' | 'bac_transaction' | 'apple_receipt'
     occurred_on: date
     amount: Decimal
     counterparty: str
     description: str
     external_ref: str
+    # Every other source is a CRC movement; apple_receipt is USD (Apple bills
+    # the owner's card in USD regardless of country) -- lib.expenses.close
+    # keeps non-CRC amounts out of the CRC total instead of guessing at an
+    # exchange rate, see format_message/format_month_total.
+    currency: str = "CRC"
 
 
 # --- BN statement ---------------------------------------------------------
@@ -190,11 +200,12 @@ _BN_VOUCHER_REF = re.compile(r"\bREF:?\s*(?P<ref>\d+)")
 _BN_VOUCHER_TOTAL = re.compile(r"TOTAL:?\s*CRC\s*(?P<amount>[\d.,]+)")
 
 
-def _voucher_lines(text: str) -> str:
-    """Normalizes a voucher body to one logical line per row, whether it
-    arrived as plain text (real newlines already) or HTML (tags stripped,
-    block/break tags turned into newlines first so the merchant and date
-    rows stay on separate lines)."""
+def _block_lines(text: str) -> str:
+    """Normalizes a receipt-style body to one logical line per row, whether
+    it arrived as plain text (real newlines already) or HTML (tags
+    stripped, block/break tags turned into newlines first so fields that
+    sit on their own row stay on separate lines). Shared by parse_bn_voucher
+    and parse_apple_receipt."""
     marked = re.sub(r"(?is)<br\s*/?>|</p>|</div>|</tr>|</li>|</td>", "\n", text)
     marked = re.sub(r"(?s)<[^>]+>", " ", marked)
     marked = unescape(marked)
@@ -202,10 +213,10 @@ def _voucher_lines(text: str) -> str:
     return "\n".join(ln for ln in lines if ln)
 
 
-def _voucher_amount(text: str) -> Decimal:
-    """BN's voucher total uses a comma decimal separator (``1900,00``), the
-    opposite of the statement's dot-decimal amounts -- strip any dot
-    (thousands) then swap the comma for a dot."""
+def _comma_amount(text: str) -> Decimal:
+    """A comma-decimal amount (``1900,00`` or Apple's ``9,99``) -- the
+    opposite of this module's other amounts, which are dot-decimal -- strip
+    any dot (thousands) then swap the comma for a dot."""
     return Decimal(text.replace(".", "").replace(",", "."))
 
 
@@ -213,7 +224,7 @@ def parse_bn_voucher(text: str, message_id: str) -> Movement | None:
     """One BN "Voucher Digital" email (bncontacto@bncr.fi.cr, same sender as
     the monthly statement but sent the moment a card purchase is
     authorized) -> a Movement. None when a required field is missing."""
-    norm = _voucher_lines(text)
+    norm = _block_lines(text)
     when = _BN_VOUCHER_WHEN.search(norm)
     auth = _BN_VOUCHER_AUT.search(norm)
     total = _BN_VOUCHER_TOTAL.search(norm)
@@ -225,10 +236,64 @@ def parse_bn_voucher(text: str, message_id: str) -> Movement | None:
     return Movement(
         source="bn_voucher",
         occurred_on=occurred,
-        amount=_voucher_amount(total["amount"]),
+        amount=_comma_amount(total["amount"]),
         counterparty=when["merchant"].strip(),
         description=description,
         external_ref=message_id,
+    )
+
+
+# --- Apple "Tu recibo de Apple" (subscriptions/purchases) -------------------
+
+APPLE_SENDER = "no_reply@email.apple.com"
+
+_SPANISH_MONTHS = {
+    "enero": 1, "febrero": 2, "marzo": 3, "abril": 4, "mayo": 5, "junio": 6,
+    "julio": 7, "agosto": 8, "septiembre": 9, "octubre": 10, "noviembre": 11, "diciembre": 12,
+}  # fmt: skip
+
+# The receipt date is the only standalone "<day> de <month> de <year>" line --
+# a renewal note ("Se renovará el 30 de noviembre de 2026") has the same date
+# shape but a prefix, so it doesn't match a whole-line anchor.
+_APPLE_DATE = re.compile(
+    r"^(?P<day>\d{1,2}) de (?P<month>[a-zA-Zá-úÁ-Ú]+) de (?P<year>\d{4})$", re.M
+)
+_APPLE_ORDER = re.compile(r"ID del pedido:\s*\n?(?P<order>\S+)")
+# The item name is the line right before the currency/amount line (an
+# optional "Se renovará el ..." renewal note may sit between them for
+# subscriptions; one-time purchases skip straight to the amount).
+_APPLE_ITEM_AMOUNT = re.compile(
+    r"^(?P<item>[^\n]+)\n"
+    r"(?:Se renovar[áa] el [^\n]+\n)?"
+    r"(?P<currency>[A-Z]{3})\s+(?P<amount>[\d.,]+)$",
+    re.M,
+)
+
+
+def parse_apple_receipt(text: str, message_id: str) -> Movement | None:
+    """One Apple "Tu recibo de Apple" email (no_reply@email.apple.com) -> a
+    Movement in whatever currency Apple billed (usually USD, never
+    converted here -- see lib.expenses.close/format_message). None when a
+    required field is missing."""
+    norm = _block_lines(text)
+    when = _APPLE_DATE.search(norm)
+    item_amount = _APPLE_ITEM_AMOUNT.search(norm)
+    if not (when and item_amount):
+        return None
+    month = _SPANISH_MONTHS.get(when["month"].lower())
+    if not month:
+        return None
+    occurred = date(int(when["year"]), month, int(when["day"]))
+    order = _APPLE_ORDER.search(norm)
+    description = f"Apple (pedido {order['order']})" if order else "Apple"
+    return Movement(
+        source="apple_receipt",
+        occurred_on=occurred,
+        amount=_comma_amount(item_amount["amount"]),
+        counterparty=item_amount["item"].strip(),
+        description=description,
+        external_ref=message_id,
+        currency=item_amount["currency"],
     )
 
 
@@ -462,6 +527,7 @@ class GmailReader:
         ("wink_transaction", f"from:{WINK_SENDER}", "notificación de transacción"),
         ("wink_bill_payment", f"from:{WINK_SENDER}", "pago de servicios"),
         ("bn_voucher", f"from:{BN_SENDER} subject:voucher", "voucher digital"),
+        ("apple_receipt", f"from:{APPLE_SENDER}", "recibo de apple"),
     ]
 
     def items(
@@ -488,7 +554,7 @@ class GmailReader:
                     yield MailItem(message_id, kind, subject, text=_text_body(msg))
                 elif kind == "bac_transaction":
                     yield MailItem(message_id, kind, subject, html=_html_body(msg))
-                elif kind == "bn_voucher":
+                elif kind in ("bn_voucher", "apple_receipt"):
                     yield MailItem(message_id, kind, subject, text=_text_body(msg) or _html_body(msg))
                 else:
                     pdfs = [

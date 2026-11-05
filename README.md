@@ -34,7 +34,7 @@ Phone ──HTTPS──> Render (free web service, Docker: FastAPI + Jinja2)
 GitHub Actions: tests on every push (Render deploys only when they pass)
                 + a ping every 10 minutes so the free instance doesn't sleep
                 + hourly: read payment emails from Gmail (IMAP, read-only) -> Neon
-                + nightly: close the owner's personal spend (BN/Wink/BAC) -> Telegram bot
+                + nightly: close the owner's personal spend (BN/Wink/BAC/Apple) -> Telegram bot
 ```
 
 ## Structure
@@ -52,7 +52,7 @@ lib/zoho_api.py              # Zoho Mail REST API client (stdlib only)
 lib/invoicing.py             # invoice and receipt PDFs (WeasyPrint)
 lib/ledger.py                # earnings summary + CSV export
 lib/workbook_csv.py          # reads the old workbook's CSV export
-lib/payment_mail.py          # reads BN statements, Wink and BAC transaction emails (Gmail IMAP)
+lib/payment_mail.py          # reads BN statements/vouchers, Wink, BAC and Apple receipt emails (Gmail IMAP)
 lib/payments.py              # matches those movements to services
 lib/expenses.py              # nightly personal-spend closing: groups by date, formats the Telegram text
 lib/telegram.py              # sends a Telegram bot message (free, no business account)
@@ -123,8 +123,9 @@ Dockerfile                   # the image Render runs
   when `LEDGER_CSV` points at a local file.
 - **Nightly personal-spend closing is separate from the client-payment
   business.** `scripts/nightly_expense_report.py` reads BN statement debits,
-  Wink sends and BAC transactions for personal spend and messages the
-  total to a Telegram bot (`lib/telegram.py`); it never writes
+  BN same-day purchase vouchers, Wink sends, Wink card transactions/bill
+  payments, BAC transactions and Apple receipts for personal spend and
+  messages the total to a Telegram bot (`lib/telegram.py`); it never writes
   `payment_events`. Not WhatsApp: Meta's Cloud API needs a Meta Business
   Account, and CallMeBot (the free no-business-account WhatsApp
   workaround) closed its registration (2026-11-01). A Wink send already recorded
@@ -134,13 +135,17 @@ Dockerfile                   # the image Render runs
   the month's last day) instead of tracking a processed-message table or a
   running total — a closing is naturally scoped to that window, so there's
   nothing to replay. On the month's last day, a second message
-  (`format_month_total`) sums the same read by card (BN/Wink/BAC) and total,
-  instead of re-reading the mailbox a second time. BN's statement arrives on
-  its own monthly schedule, not the day of the transaction, so the script
-  searches further back for it and keeps only the lines inside the window.
-  BAC's reversal/refund wording isn't confirmed from a real sample yet
-  (`_BAC_REFUND_TYPES` in `lib/payment_mail.py`) — verify against a real
-  one and extend it if BAC names it differently.
+  (`format_month_total`) sums the same read by card (BN/Wink/BAC/Apple) and
+  total, instead of re-reading the mailbox a second time. BN's statement
+  arrives on its own monthly schedule, not the day of the transaction, so
+  the script searches further back for it and keeps only the lines inside
+  the window. Apple bills in USD regardless of country; since there's no
+  live exchange rate here, a USD movement is shown as its own line and a
+  separate "Total USD" instead of being guessed into the CRC total (see
+  `lib/expenses.py`'s `close` docstring). BAC's reversal/refund wording
+  isn't confirmed from a real sample yet (`_BAC_REFUND_TYPES` in
+  `lib/payment_mail.py`) — verify against a real one and extend it if BAC
+  names it differently.
 
 ## Setup
 
