@@ -8,8 +8,12 @@ Three senders are read:
   every debit line (``500.00-``) is the owner's own spend -- a self-transfer
   between their own accounts names them the same way a credit names a payer
   (e.g. ``CUBILLO VILLALOBOS A/RECARGA DE DINERO``), a merchant charge has
-  no payer to split out. BN sends no per-transfer email, so movements show
-  up once a month.
+  no payer to split out. The statement itself is monthly, on BN's own
+  schedule -- but BN also sends a same-day "Voucher Digital" (same sender,
+  plain receipt body) the moment a card purchase is authorized, with the
+  merchant, an English-abbreviated date/time, masked card, NRO. AUT, REF
+  and a CRC total using a comma decimal separator (``1900,00``), parsed by
+  parse_bn_voucher.
 - Wink's "Notificación de envío" (transacciones@holawink.com): one email per
   transfer the owner sends, with recipient name, amount and date. Wink also
   sends a "Notificación de transacción" (same sender) for card purchases --
@@ -50,7 +54,7 @@ BAC_SENDER = "notificacionbac@baccredomatic.cr"
 
 @dataclass
 class Movement:
-    source: str  # 'bn_statement' | 'bn_statement_debit' | 'wink_send' | 'wink_transaction' | 'wink_bill_payment' | 'bac_transaction'
+    source: str  # 'bn_statement' | 'bn_statement_debit' | 'bn_voucher' | 'wink_send' | 'wink_transaction' | 'wink_bill_payment' | 'bac_transaction'
     occurred_on: date
     amount: Decimal
     counterparty: str
@@ -167,6 +171,65 @@ def parse_bn_statement_debits(text: str) -> tuple[str, list[Movement]]:
             )
         )
     return owner, debits
+
+
+# --- BN "Voucher Digital" (same-day purchase receipt) ----------------------
+
+# The merchant name sits on its own line, immediately followed by a line with
+# an English-abbreviated date -- both anchored to line boundaries (re.M) so a
+# stray "." from the preceding narrative sentence can't be swallowed into the
+# merchant capture the way an unanchored, whitespace-collapsed match would.
+_BN_VOUCHER_WHEN = re.compile(
+    r"^(?P<merchant>[A-Z0-9ÁÉÍÓÚÑ.,'/&-]+(?: [A-Z0-9ÁÉÍÓÚÑ.,'/&-]+)*)$\n"
+    r"^(?P<month>Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(?P<day>\d{1,2}),\s*(?P<year>\d{4})"
+    r"\s*-\s*(?P<time>\d{1,2}:\d{2}\s*[ap]\.m\.)$",
+    re.M,
+)
+_BN_VOUCHER_AUT = re.compile(r"NRO\.\s*AUT:?\s*(?P<auth>\d+)")
+_BN_VOUCHER_REF = re.compile(r"\bREF:?\s*(?P<ref>\d+)")
+_BN_VOUCHER_TOTAL = re.compile(r"TOTAL:?\s*CRC\s*(?P<amount>[\d.,]+)")
+
+
+def _voucher_lines(text: str) -> str:
+    """Normalizes a voucher body to one logical line per row, whether it
+    arrived as plain text (real newlines already) or HTML (tags stripped,
+    block/break tags turned into newlines first so the merchant and date
+    rows stay on separate lines)."""
+    marked = re.sub(r"(?is)<br\s*/?>|</p>|</div>|</tr>|</li>|</td>", "\n", text)
+    marked = re.sub(r"(?s)<[^>]+>", " ", marked)
+    marked = unescape(marked)
+    lines = (re.sub(r"[ \t]+", " ", ln).strip() for ln in marked.splitlines())
+    return "\n".join(ln for ln in lines if ln)
+
+
+def _voucher_amount(text: str) -> Decimal:
+    """BN's voucher total uses a comma decimal separator (``1900,00``), the
+    opposite of the statement's dot-decimal amounts -- strip any dot
+    (thousands) then swap the comma for a dot."""
+    return Decimal(text.replace(".", "").replace(",", "."))
+
+
+def parse_bn_voucher(text: str, message_id: str) -> Movement | None:
+    """One BN "Voucher Digital" email (bncontacto@bncr.fi.cr, same sender as
+    the monthly statement but sent the moment a card purchase is
+    authorized) -> a Movement. None when a required field is missing."""
+    norm = _voucher_lines(text)
+    when = _BN_VOUCHER_WHEN.search(norm)
+    auth = _BN_VOUCHER_AUT.search(norm)
+    total = _BN_VOUCHER_TOTAL.search(norm)
+    if not (when and auth and total) or when["month"] not in _BAC_MONTHS:
+        return None
+    occurred = date(int(when["year"]), _BAC_MONTHS[when["month"]], int(when["day"]))
+    ref = _BN_VOUCHER_REF.search(norm)
+    description = f"Compra con BN (REF {ref['ref']})" if ref else "Compra con BN"
+    return Movement(
+        source="bn_voucher",
+        occurred_on=occurred,
+        amount=_voucher_amount(total["amount"]),
+        counterparty=when["merchant"].strip(),
+        description=description,
+        external_ref=message_id,
+    )
 
 
 def pdf_text(pdf_bytes: bytes) -> str:
@@ -398,6 +461,7 @@ class GmailReader:
         ("bac_transaction", f"from:{BAC_SENDER}", "notificación de transacción"),
         ("wink_transaction", f"from:{WINK_SENDER}", "notificación de transacción"),
         ("wink_bill_payment", f"from:{WINK_SENDER}", "pago de servicios"),
+        ("bn_voucher", f"from:{BN_SENDER} subject:voucher", "voucher digital"),
     ]
 
     def items(
@@ -424,6 +488,8 @@ class GmailReader:
                     yield MailItem(message_id, kind, subject, text=_text_body(msg))
                 elif kind == "bac_transaction":
                     yield MailItem(message_id, kind, subject, html=_html_body(msg))
+                elif kind == "bn_voucher":
+                    yield MailItem(message_id, kind, subject, text=_text_body(msg) or _html_body(msg))
                 else:
                     pdfs = [
                         p.get_payload(decode=True)

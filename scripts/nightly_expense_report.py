@@ -6,8 +6,9 @@ month's last day, also sends a month-total summary.
 
 Runs nightly from .github/workflows/expense_report.yml, shortly after
 midnight (TIMEZONE, default America/Costa_Rica). Reads BN statement debits,
-Wink sends, Wink card transactions, Wink bill payments and BAC transactions
-(lib/payment_mail.py) for the day that just ended, excludes Wink sends already recorded as collaborator payouts in
+BN same-day vouchers, Wink sends, Wink card transactions, Wink bill
+payments and BAC transactions (lib/payment_mail.py) for the day that just
+ended, excludes Wink sends already recorded as collaborator payouts in
 payment_events (read-only -- see lib/expenses.py), and messages the total
 to a Telegram bot (lib/telegram.py) -- not WhatsApp: Meta's Cloud API needs
 a Business Account, and CallMeBot (the free workaround) closed registration.
@@ -45,6 +46,7 @@ from lib.payment_mail import (
     GmailReader,
     parse_bac_transaction,
     parse_bn_statement_debits,
+    parse_bn_voucher,
     parse_wink_bill_payment,
     parse_wink_send,
     parse_wink_transaction,
@@ -105,7 +107,7 @@ def main() -> int:
     reader = GmailReader(os.environ["GMAIL_ADDRESS"], os.environ["GMAIL_APP_PASSWORD"])
     movements = []
     owner = ""
-    stats = {"emails": 0, "debits": 0, "sends": 0, "bac": 0, "wink_txn": 0, "wink_bill": 0}
+    stats = {"emails": 0, "debits": 0, "sends": 0, "bac": 0, "wink_txn": 0, "wink_bill": 0, "bn_voucher": 0}
     try:
         # BN's statement email isn't sent the day of the transaction -- it's
         # monthly, on BN's own schedule -- so "SINCE range_start" would almost
@@ -128,6 +130,7 @@ def main() -> int:
             GmailReader.EXPENSE_WANTED[2],
             GmailReader.EXPENSE_WANTED[3],
             GmailReader.EXPENSE_WANTED[4],
+            GmailReader.EXPENSE_WANTED[5],
         ]
         for item in reader.items(range_start, skip=set(), wanted=same_day_wanted):
             stats["emails"] += 1
@@ -151,6 +154,11 @@ def main() -> int:
                 if txn and range_start <= txn.occurred_on <= yesterday:
                     stats["bac"] += 1
                     movements.append(txn)
+            elif item.kind == "bn_voucher":
+                voucher = parse_bn_voucher(item.text or "", item.message_id)
+                if voucher and range_start <= voucher.occurred_on <= yesterday:
+                    stats["bn_voucher"] += 1
+                    movements.append(voucher)
     finally:
         reader.close()
 

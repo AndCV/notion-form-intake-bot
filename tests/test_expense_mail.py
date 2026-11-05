@@ -8,6 +8,7 @@ from decimal import Decimal
 from lib.payment_mail import (
     parse_bac_transaction,
     parse_bn_statement_debits,
+    parse_bn_voucher,
     parse_wink_bill_payment,
     parse_wink_transaction,
 )
@@ -160,3 +161,43 @@ def test_bac_transaction_missing_fields_returns_none():
     """protects: a malformed or unrelated HTML email doesn't become a phantom Movement;
     fails_when: a required field (Comercio/Fecha/Monto) is missing but a Movement is built anyway."""
     assert parse_bac_transaction("<p>Hola, gracias por su visita.</p>", "<bac4@x>") is None
+
+
+BN_VOUCHER = """Estimado señor(a): CUBILLO VILLALOBOS ANDRES DAVID
+
+Reciba un cordial saludo de parte del Banco Nacional.
+
+Por este medio le hacemos llegar el comprobante de Compra realizada en SODA DEMO CARTAGO CRI el 4 de Noviembre de 2026 a las 1:25 p.m.
+SODA DEMO CARTAGO CRI
+Nov 4, 2026 - 1:25 p.m.
+MASTERCARD    ************9117
+NRO. AUT:    459615
+REF:    630813361230
+TOTAL:    CRC 1900,00
+"""
+
+
+def test_bn_voucher_reads_merchant_amount_and_date():
+    """protects: BN's same-day "Voucher Digital" purchase receipt (same sender as the
+      monthly statement, but sent immediately) becomes a Movement -- the merchant line
+      right before the English-abbreviated date, NRO. AUT/REF/TOTAL fields, and the
+      comma-decimal CRC amount (``1900,00``, opposite of the statement's dot-decimal);
+    fails_when: the merchant swallows the date token, the comma/dot amount is misread,
+      or the date is parsed in the wrong order;
+    no_claim: verified against two real voucher emails' field layout (merchant/amount
+      here are synthetic, per this file's module docstring)."""
+    m = parse_bn_voucher(BN_VOUCHER, "<bnvoucher1@x>")
+
+    assert m.counterparty == "SODA DEMO CARTAGO CRI"
+    assert m.amount == Decimal("1900.00")
+    assert m.occurred_on == date(2026, 11, 4)
+    assert m.source == "bn_voucher" and m.external_ref == "<bnvoucher1@x>"
+    assert "630813361230" in m.description
+
+
+def test_bn_voucher_missing_fields_returns_none():
+    """protects: BN's monthly statement email or an unrelated message doesn't become a
+      phantom same-day voucher Movement;
+    fails_when: a required field (merchant+date block, NRO. AUT, TOTAL) is missing but a
+      Movement is built anyway."""
+    assert parse_bn_voucher("Reciba un cordial saludo de parte del Banco Nacional.", "<bnvoucher2@x>") is None

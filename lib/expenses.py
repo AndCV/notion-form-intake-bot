@@ -27,6 +27,7 @@ from .payments import is_owner
 
 SOURCE_LABELS = {
     "bn_statement_debit": "BN",
+    "bn_voucher": "BN",
     "wink_send": "Wink",
     "wink_transaction": "Wink",
     "wink_bill_payment": "Wink",
