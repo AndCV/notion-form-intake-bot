@@ -12,8 +12,9 @@ Three senders are read:
   schedule -- but BN also sends a same-day "Voucher Digital" (same sender,
   plain receipt body) the moment a card purchase is authorized, with the
   merchant, an English-abbreviated date/time, masked card, NRO. AUT, REF
-  and a CRC total using a comma decimal separator (``1900,00``), parsed by
-  parse_bn_voucher.
+  and a total using a comma decimal separator (``1900,00``), in either CRC
+  or USD (the card bills foreign merchants straight in USD, no conversion
+  line), parsed by parse_bn_voucher.
 - Wink's "Notificación de envío" (transacciones@holawink.com): one email per
   transfer the owner sends, with recipient name, amount and date. Wink also
   sends a "Notificación de transacción" (same sender) for card purchases --
@@ -65,8 +66,9 @@ class Movement:
     counterparty: str
     description: str
     external_ref: str
-    # Every other source is a CRC movement; apple_receipt is USD (Apple bills
-    # the owner's card in USD regardless of country) -- lib.expenses.close
+    # Most sources are CRC; apple_receipt is always USD (Apple bills the
+    # owner's card in USD regardless of country), and bn_voucher is USD
+    # whenever BN billed the purchase straight in USD -- lib.expenses.close
     # keeps non-CRC amounts out of the CRC total instead of guessing at an
     # exchange rate, see format_message/format_month_total.
     currency: str = "CRC"
@@ -197,7 +199,9 @@ _BN_VOUCHER_WHEN = re.compile(
 )
 _BN_VOUCHER_AUT = re.compile(r"NRO\.\s*AUT:?\s*(?P<auth>\d+)")
 _BN_VOUCHER_REF = re.compile(r"\bREF:?\s*(?P<ref>\d+)")
-_BN_VOUCHER_TOTAL = re.compile(r"TOTAL:?\s*CRC\s*(?P<amount>[\d.,]+)")
+# BN cards also bill foreign purchases straight in USD (no conversion line) --
+# the currency sits right before the amount, same comma-decimal format as CRC.
+_BN_VOUCHER_TOTAL = re.compile(r"TOTAL:?\s*(?P<currency>CRC|USD)\s*(?P<amount>[\d.,]+)")
 
 
 def _block_lines(text: str) -> str:
@@ -240,6 +244,7 @@ def parse_bn_voucher(text: str, message_id: str) -> Movement | None:
         counterparty=when["merchant"].strip(),
         description=description,
         external_ref=message_id,
+        currency=total["currency"],
     )
 
 

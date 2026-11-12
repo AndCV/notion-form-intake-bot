@@ -49,9 +49,10 @@ class ExpenseReport:
     total: Decimal
     excluded_business_count: int
     excluded_self_transfer_count: int = 0
-    # Non-CRC movements (currently only apple_receipt, in USD): kept as line
-    # items under their day like any other movement, but summed here instead
-    # of into `total` -- see close()'s docstring.
+    # Non-CRC movements (apple_receipt always, bn_voucher when BN billed it
+    # straight in USD): kept as line items under their day like any other
+    # movement, but summed here instead of into `total` -- see close()'s
+    # docstring.
     foreign_totals: dict[str, Decimal] = field(default_factory=dict)
 
 
@@ -86,12 +87,13 @@ def close(
     parse_bn_statement_debits; pass "" to skip the name check (e.g. no BN
     statement was read this run).
 
-    A non-CRC movement (currently only apple_receipt, billed in USD) stays
-    in its day's `movements` list like any other line item, but its amount
-    is kept out of `total`/`DayTotal.total` and summed separately into
-    `foreign_totals` instead -- there's no live exchange rate here, so
-    mixing currencies into one number would misstate the total rather than
-    just omit a conversion."""
+    A non-CRC movement (apple_receipt, always USD; bn_voucher, when BN
+    billed the purchase straight in USD) stays in its day's `movements`
+    list like any other line item, but its amount is kept out of
+    `total`/`DayTotal.total` and summed separately into `foreign_totals`
+    instead -- there's no live exchange rate here, so mixing currencies
+    into one number would misstate the total rather than just omit a
+    conversion."""
     personal, excluded_business, excluded_self = [], 0, 0
     for m in movements:
         if m.source == "wink_send" and m.external_ref in business_wink_refs:
@@ -146,8 +148,8 @@ def _where(m: Movement) -> str:
 
 
 def _amount_text(m: Movement, currency_symbol: str) -> str:
-    """CRC movements use `currency_symbol`; anything else (currently only
-    apple_receipt, USD) is shown in its own currency code instead of being
+    """CRC movements use `currency_symbol`; anything else (apple_receipt or
+    a USD bn_voucher) is shown in its own currency code instead of being
     converted -- see close()'s docstring."""
     if m.currency == "CRC":
         return f"{currency_symbol}{m.amount:,.2f}"
@@ -182,8 +184,8 @@ def format_month_total(report: ExpenseReport, month_start: date, currency_symbol
     the whole month (scripts/nightly_expense_report.py sends this once, on
     the last day's nightly run, alongside that day's regular message). The
     per-card subtotals and the month total are CRC only; a non-CRC source
-    (currently only apple_receipt) gets its own per-currency line instead of
-    being mixed in, same reasoning as close()'s docstring."""
+    (apple_receipt, or a bn_voucher billed in USD) gets its own per-currency
+    line instead of being mixed in, same reasoning as close()'s docstring."""
     month_name = MONTH_NAMES[month_start.month - 1]
     header = f"*Cierre de {month_name} {month_start.year}*"
     if not report.days:

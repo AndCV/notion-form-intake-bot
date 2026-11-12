@@ -196,6 +196,36 @@ def test_bn_voucher_reads_merchant_amount_and_date():
     assert "630813361230" in m.description
 
 
+BN_VOUCHER_USD = """Estimado señor(a): CUBILLO VILLALOBOS ANDRES DAVID
+
+Reciba un cordial saludo de parte del Banco Nacional.
+
+Por este medio le hacemos llegar el comprobante de Compra realizada en MERPAGO MARQUESITAS SOLIDARIDAD MEX el 11 de Noviembre de 2026 a las 9:00 p.m.
+MERPAGO MARQUESITAS SOLIDARIDAD MEX
+Nov 11, 2026 - 9:00 p.m.
+MASTERCARD    ************6852
+NRO. AUT:    688275
+REF:    111145859583
+TOTAL:    USD 3,27
+"""
+
+
+def test_bn_voucher_in_usd_is_tagged_as_foreign_currency():
+    """protects: a BN voucher billed straight in USD (card charges a foreign
+      merchant directly, no CRC conversion line) still becomes a Movement,
+      tagged currency="USD" so lib.expenses.close keeps it out of the CRC
+      total instead of dropping it;
+    fails_when: the parser only recognizes "TOTAL: CRC ..." and returns None
+      for a "TOTAL: USD ..." voucher, silently losing the expense."""
+    m = parse_bn_voucher(BN_VOUCHER_USD, "<bnvoucher3@x>")
+
+    assert m is not None
+    assert m.currency == "USD"
+    assert m.amount == Decimal("3.27")
+    assert m.counterparty == "MERPAGO MARQUESITAS SOLIDARIDAD MEX"
+    assert m.occurred_on == date(2026, 11, 11)
+
+
 def test_bn_voucher_missing_fields_returns_none():
     """protects: BN's monthly statement email or an unrelated message doesn't become a
       phantom same-day voucher Movement;
