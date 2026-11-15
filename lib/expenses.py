@@ -139,12 +139,22 @@ def close(
     )
 
 
+def _escape_markdown(text: str) -> str:
+    """Escapes Telegram legacy Markdown's special characters (_, *, `, [) so
+    merchant/description text pulled verbatim from bank emails -- which
+    often contains a stray `*` or `_`, e.g. "SUPER*COMPRA" -- can't break
+    the parser (see send() in lib/telegram.py, parse_mode="Markdown")."""
+    for char in "_*`[":
+        text = text.replace(char, f"\\{char}")
+    return text
+
+
 def _where(m: Movement) -> str:
     """Merchant/recipient text for one line of the message: BAC, Wink and a
     BN self-looking debit carry it in counterparty; a plain merchant debit
     (see parse_bn_statement_debits) has no payer to split out, so its
     merchant text is in description instead."""
-    return m.counterparty or m.description or "(sin detalle)"
+    return _escape_markdown(m.counterparty or m.description or "(sin detalle)")
 
 
 def _amount_text(m: Movement, currency_symbol: str) -> str:

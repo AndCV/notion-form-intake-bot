@@ -228,6 +228,21 @@ def test_format_message_shows_non_crc_movements_in_their_own_currency():
     assert message.endswith("*Total: ₡8,500.00*\n*Total USD (no incluido arriba): 9.99*")
 
 
+def test_format_message_escapes_markdown_in_merchant_text():
+    """protects: a merchant/description name carrying a raw `_`, `*`, backtick or `[`
+      (common in card-network comercio fields, e.g. "SUPER*COMPRA") gets escaped so
+      Telegram's legacy Markdown parser doesn't reject the whole message;
+    fails_when: the special character reaches the message unescaped."""
+    report = close(
+        [
+            _movement("bac_transaction", date(2026, 11, 14), "8500.00", counterparty="SUPER*COMPRA_A [1]"),
+        ],
+        business_wink_refs=set(),
+    )
+    message = format_message(report)
+    assert "SUPER\\*COMPRA\\_A \\[1]" in message
+
+
 def test_format_month_total_breaks_down_by_card():
     """protects: the month-end message names the Spanish month, sums per card
       (BN/Wink/BAC) and ends with the grand total;
